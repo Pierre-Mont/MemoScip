@@ -1,0 +1,31 @@
+#ifndef MEMOSCIP_OPTION_H
+#define MEMOSCIP_OPTION_H
+
+#include <string>
+
+/** Parsed command-line options for memobound. */
+struct MemoSCIPRunOptions {
+    std::string instancePath;
+    /** SCIP `display/verblevel` (0 = quiet). */
+    int verbosity = 0;
+    /** Learning pipeline: 0 = off, >= 1 = register learning event handlers (level for future use). */
+    int learning = 0;
+    /** Extra outputs: intermediate LP dumps, etc. */
+    int output = 0;
+    /** Reserved / future profiling hooks. */
+    bool profiling = false;
+
+    bool debug = false;
+};
+
+/** Parse argv. Expects one instance file path (any non-flag argument) and optional flags. */
+bool parse_memoscip_cli(int argc, char** argv, MemoSCIPRunOptions& out, std::string& errMsg);
+
+void print_memoscip_usage(const char* programName);
+
+
+/** Single shared instance; inline (C++17) so no separate .cpp definition is required. */
+inline MemoSCIPRunOptions g_options{};
+
+
+#endif

@@ -39,3 +39,15 @@
 
 # debug information files
 *.dwo
+
+*.lp
+
+*.sol
+
+/build/
+
+/.vscode/
+
+/CMakeFiles/
+
+/make

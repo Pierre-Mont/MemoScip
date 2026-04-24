@@ -16,6 +16,12 @@ struct MemoSCIPRunOptions {
     bool profiling = false;
 
     bool debug = false;
+    /** Number of cuts to add. */
+    bool NC = false;
+    /** Branching consistency: 0 = off, >= 1 = enable branching consistency. */
+    bool BC = false;
+
+    bool INF= true; // True = collect infeasibility certificate, False = do not collect infeasibility certificate
 };
 
 /** Parse argv. Expects one instance file path (any non-flag argument) and optional flags. */

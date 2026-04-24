@@ -61,8 +61,10 @@ int main(int argc, char** argv)
     SCIP_CALL( SCIPsetIntParam(scip, "branching/pscost/priority", 2000000) );    // register handlers
 
     //FULL VERBOSITY
-    //SCIP_CALL( SCIPsetIntParam(scip, "display/verblevel", 2) );
-    //SCIP_CALL( SCIPsetBoolParam(scip, "display/lpinfo", TRUE) );
+     if(g_options.verbosity > 2){
+        SCIP_CALL( SCIPsetIntParam(scip, "display/verblevel", 2) );
+        SCIP_CALL( SCIPsetBoolParam(scip, "display/lpinfo", TRUE) );
+    }
 
     // disable heuristics, presolving, separation
     SCIP_CALL(SCIPsetHeuristics(scip, SCIP_PARAMSETTING_OFF, TRUE));
@@ -74,10 +76,15 @@ int main(int argc, char** argv)
 
     SCIP_CALL( SCIPsetIntParam(scip, "lp/disablecutoff", 1) );
 
-    
-    //Enable basic propagation
-    SCIP_CALL( SCIPsetIntParam(scip, "propagating/maxrounds", -1) );
-    SCIP_CALL( SCIPsetIntParam(scip, "propagating/maxroundsroot", -1) );
+    if(g_options.BC){
+        cout<<"enable bound propagation"<<endl;
+        //Enable basic propagation
+        SCIP_CALL( SCIPsetIntParam(scip, "propagating/maxrounds", -1) );
+        SCIP_CALL( SCIPsetIntParam(scip, "propagating/maxroundsroot", -1) );
+    }else{
+        SCIP_CALL( SCIPsetIntParam(scip, "propagating/maxrounds", 0) );
+        SCIP_CALL( SCIPsetIntParam(scip, "propagating/maxroundsroot", 0) );
+    }
 
      //disable other propagation
     SCIP_CALL(SCIPsetIntParam(scip, "propagating/dualfix/freq", -1));

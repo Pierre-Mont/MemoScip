@@ -42,6 +42,21 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
         return true;
     }
 
+    if(std::strcmp(s, "-NC") == 0)
+    {
+        out.NC = true;
+        return true;
+    }
+    if(std::strcmp(s, "-BC") == 0)
+    {
+        out.BC = true;
+        return true;
+    }
+    if(std::strcmp(s, "-INF") == 0)
+    {
+        out.INF = false;
+        return true;
+    }
     /* -v... / -l... */
     if (s[1] == 'v' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
     {
@@ -79,7 +94,7 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
         return true;
     }
 
-    errMsg = std::string("unknown option: ") + s;
+    
     return false;
 }
 

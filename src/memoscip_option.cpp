@@ -25,6 +25,26 @@ static bool parse_int_suffix(const char* flagName, const char* rest, int& outVal
     return true;
 }
 
+static bool parse_float_suffix(const char* flagName, const char* rest, float& outVal, std::string& errMsg)
+{
+    if (rest == nullptr || *rest == '\0')
+    {
+        errMsg = std::string(flagName) + " requires a value (e.g. " + flagName + "=0.5)";
+        return false;
+    }
+    if (*rest == '=')
+        ++rest;
+    char* end = nullptr;
+    double v = std::strtod(rest, &end);
+    if (end == rest || (end != nullptr && *end != '\0'))
+    {
+        errMsg = std::string("invalid float for ") + flagName + ": " + rest;
+        return false;
+    }
+    outVal = static_cast<float>(v);
+    return true;
+}
+
 static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::string& errMsg)
 {
     if (s == nullptr || s[0] != '-' || s[1] == '\0')
@@ -86,13 +106,32 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
         const char* rest = s + 2;
         if (*rest == '\0')
         {
-            errMsg = "-o requires a value (e.g. -o=2 or -o2)";
+            errMsg = "-o requires a positive integer value (e.g. -o=2 or -o2)";
             return false;
         }
         if (!parse_int_suffix("-o", rest, out.output, errMsg))
             return false;
+        if (out.output <= 0)
+        {
+            errMsg = "-o requires a positive integer value (e.g. -o=2 or -o2)";
+            return false;
+        }
         return true;
     }
+    
+    if (s[1] == 'm' && (s[2] == '\0' || s[2] == '=' || ( (s[2] >= '0' && s[2] <= '9') || s[2] == '.' || s[2] == '+' || s[2] == '-')))
+    {
+        const char* rest = s + 2;
+        if (*rest == '\0')
+        {
+            errMsg = "-m requires a value (e.g. -m=0.5 or -m0.5)";
+            return false;
+        }
+        if (!parse_float_suffix("-m", rest, out.minInc, errMsg))
+            return false;
+        return true;
+    }
+    
 
     
     return false;
@@ -141,7 +180,8 @@ void print_memoscip_usage(const char* programName)
         << "Options:\n"
         << "  -v=N       SCIP display verbosity (integer, default 0)\n"
         << "  -l=N       Learning mode level (0 = off, >= 1 enables learning handlers)\n"
-        << "  -o         Extra output (write begin.lp and end.lp)\n"
+        << "  -o         Extra outputs: intermediate LP dumps, etc.\n"
+        << "  -m=F       Minimum increment (float, default 1.0)\n"
         << "  -p         Profiling / reserved for future use\n"
         << "\n"
         << "Examples:\n"

@@ -16,7 +16,7 @@
 
 double roundToDecimals(double val, int decimals) {
     double factor = std::pow(10.0, decimals);
-    return std::round(val * factor) / factor;
+    return std::ceil(val * factor) / factor;
 }
 
 /** queues a cut to be added in the next separation round */
@@ -97,7 +97,7 @@ void SCIPprintQueuedCuts(
 
 
 
-SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q)
+SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, double Top)
 {
    //SCIPprintQueuedCuts(scip,q);
      
@@ -148,8 +148,8 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q)
                                     0,       // nvars 
                                     NULL,    // vars
                                     NULL,    // vals
-                                    cut.lhs, // lhs
-                                    cut.rhs, // rhs
+                                    roundToDecimals(cut.lhs, 5), // lhs
+                                    roundToDecimals(cut.rhs, 5), // rhs
                                     TRUE,    // initial
                                     FALSE,   // separate
                                     TRUE,    // enforce
@@ -162,18 +162,22 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q)
                                     FALSE) );// stickingatnode
 
       SCIP_Real NegCoef=0;
-      for( size_t i = 0; i < cut.vars.size(); ++i )
+      for( size_t i = 0; i < cut.vars.size()-1; ++i )
       {
          if(cut.vals[i]<0 && SCIPvarGetName(cut.vars[i])[2]!='s')
             NegCoef+=cut.vals[i];
+         if(SCIPvarGetName(cut.vars[i])[2]=='s')
+            NegCoef+=-9000;
       }
       // Ajouter les variables
       for( size_t i = 0; i < cut.vars.size(); ++i )
       {
-         if(SCIPvarGetName(cut.vars[i])[2]!='s')
-            SCIP_CALL( SCIPaddCoefLinear(scip, cons, cut.vars[i], std::min(cut.lhs - NegCoef, cut.vals[i])) );
+         if(SCIPvarGetName(cut.vars[i])[2]!='s'){
+            //SCIP_CALL( SCIPaddCoefLinear(scip, cons, cut.vars[i], std::min(cut.lhs - NegCoef, cut.vals[i])) );
+            SCIP_CALL( SCIPaddCoefLinear(scip, cons, cut.vars[i],  std::min(roundToDecimals(cut.vals[i], 5), Top)));
+         }
          else
-            SCIP_CALL( SCIPaddCoefLinear(scip, cons, cut.vars[i], cut.vals[i]) );
+            SCIP_CALL( SCIPaddCoefLinear(scip, cons, cut.vars[i], roundToDecimals(cut.vals[i], 5)) );
       }
       
 

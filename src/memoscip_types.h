@@ -22,12 +22,6 @@ struct SolCollector {
     SCIP_RETCODE collect(SCIP* scip);
 };
 
-inline double round_to_digits(double x, int digits)
-{
-    double f = std::pow(10.0, digits);
-    return std::round(x * f) / f;
-}
-
 struct NodeInfo {
     int number = 0;
     SCIP_Real lb_increase = 0.0;
@@ -39,6 +33,7 @@ struct NodeInfo {
     int nvarsparent = 0;
     SCIP_CONS* objcons = nullptr;
     std::string Status = "Unknown";
+    bool LbgUb = false;
     std::pair<std::vector<SCIP_Real>, SCIP_Real> DualProofCoef;
     std::vector<int> DualProofInds;
     std::vector<SCIP_VAR*> DualProofVars;
@@ -84,7 +79,7 @@ struct MemoSCIPContext {
     std::vector<SCIP_Real> VarUb;
     std::vector<SCIP_VAR*> OrderVar;
     std::string FileExt;
-    long long TOP = 10000000;
+    long long TOP = 100000;
 };
 
 /** Single shared instance; inline (C++17) so no separate .cpp definition is required. */

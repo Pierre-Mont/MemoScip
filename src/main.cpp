@@ -37,7 +37,7 @@ int main(int argc, char** argv)
     if(fileext==".wcsp"){
         cout<<"Converting "<<filepath<<" to .lp using wcsp2lp-support_learn.py"<<endl;
         string lpfile = filepath.substr(0, filepath.size()-5)+".lp";
-        string command = "python3 wcsp2lp-support_learn.py "+filepath+" "+lpfile;
+        string command = "python3 /home/kisouke/MemoSCIP/wcsp2lp-support_learn.py "+filepath+" "+lpfile;
         system(command.c_str());
         filepath = lpfile;
         fileext = ".lp";
@@ -77,14 +77,25 @@ int main(int argc, char** argv)
     SCIP_CALL( SCIPsetIntParam(scip, "lp/disablecutoff", 1) );
 
     if(g_options.BC){
-        cout<<"enable bound propagation"<<endl;
+        cout<<"Bound propagation enabled"<<endl;
         //Enable basic propagation
         SCIP_CALL( SCIPsetIntParam(scip, "propagating/maxrounds", -1) );
         SCIP_CALL( SCIPsetIntParam(scip, "propagating/maxroundsroot", -1) );
     }else{
+        cout<<"Bound propagation disabled"<<endl;
         SCIP_CALL( SCIPsetIntParam(scip, "propagating/maxrounds", 0) );
         SCIP_CALL( SCIPsetIntParam(scip, "propagating/maxroundsroot", 0) );
     }
+
+    if(g_options.NC)
+        cout<<"Node consistency enabled"<<endl;
+    else
+        cout<<"Node consistency disabled"<<endl;
+
+    if(g_options.INF)
+        cout<<"Infeasibility certificate collection enabled"<<endl;
+    else
+        cout<<"Infeasibility certificate collection disabled"<<endl;
 
      //disable other propagation
     SCIP_CALL(SCIPsetIntParam(scip, "propagating/dualfix/freq", -1));
@@ -120,9 +131,9 @@ int main(int argc, char** argv)
 
     
     //Fix numerics
-    SCIP_CALL( SCIPsetRealParam(scip, "numerics/feastol",     1e-5) );
-    SCIP_CALL( SCIPsetRealParam(scip, "numerics/dualfeastol", 1e-5) );
-    SCIP_CALL( SCIPsetRealParam(scip, "numerics/epsilon",     1e-7) );
+    SCIP_CALL( SCIPsetRealParam(scip, "numerics/feastol",     9e-5) );
+    SCIP_CALL( SCIPsetRealParam(scip, "numerics/dualfeastol", 9e-5) );
+    SCIP_CALL( SCIPsetRealParam(scip, "numerics/epsilon",     1e-6) );
     SCIP_CALL( SCIPsetIntParam(scip, "lp/scaling", 0) );
 
     
@@ -325,22 +336,18 @@ int main(int argc, char** argv)
         cout << "Start Solving " << endl;
     SCIP_CALL(SCIPsolve(scip));
 
-    if (g_options.output > 1)
-        FinishLearn(scip, 1);
+    /*if (g_options.output > 1)
+        FinishLearn(scip, 1);*/
 
     if (g_options.output > 0)
         SCIP_CALL(SCIPwriteTransProblem(scip, "end.lp", "lp", FALSE));
-    if(g_options.learning > 0){
-        cout<<"Learning enabled"<<endl;
-        cout<<"Number of learned cuts : "<<g_memoscip.nbAddedctr<<endl;
-    }
-    else
-        cout<<"Learning disabled"<<endl;
+
     cout<<"Solving Status : "<<SCIPgetStatus(scip)<<endl;
     cout<<"Solving time : "<<SCIPgetSolvingTime(scip)<<endl;
     cout<<"Nodes : "<<SCIPgetNNodes(scip)<<endl;
     cout<<"Primal bound : "<<SCIPgetPrimalbound(scip)<<endl;
     cout<<"Dual bound : "<<SCIPgetDualbound(scip)<<endl;
+    cout<<"Number of learned cuts : "<<g_memoscip.nbAddedctr<<endl;
     cout<<"Gap : "<<SCIPgetGap(scip)<<endl;
     if(g_options.verbosity > 1){
         SCIP_SOL* sol = SCIPgetBestSol(scip);

@@ -34,6 +34,6 @@ SCIP_RETCODE SCIPqueueCut(
    SCIP_Real rhs,
    MyQueue* q);
 
-SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q);
+SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, double Top);
 
 #endif

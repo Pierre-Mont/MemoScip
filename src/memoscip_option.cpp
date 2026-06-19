@@ -77,6 +77,11 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
         out.INF = false;
         return true;
     }
+    if (std::strcmp(s, "-kpcg") == 0)
+    {
+        out.kpcg = true;
+        return true;
+    }
     /* -v... / -l... */
     if (s[1] == 'v' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
     {
@@ -116,6 +121,19 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
             errMsg = "-o requires a positive integer value (e.g. -o=2 or -o2)";
             return false;
         }
+        return true;
+    }
+
+    if (s[1] == 's' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
+    {
+        const char* rest = s + 2;
+        if (*rest == '\0')
+        {
+            errMsg = "-s requires an integer value (e.g. -s=10 or -s10)";
+            return false;
+        }
+        if (!parse_int_suffix("-s", rest, out.nbslack, errMsg))
+            return false;
         return true;
     }
     
@@ -182,7 +200,9 @@ void print_memoscip_usage(const char* programName)
         << "  -l=N       Learning mode level (0 = off, >= 1 enables learning handlers)\n"
         << "  -o         Extra outputs: intermediate LP dumps, etc.\n"
         << "  -m=F       Minimum increment (float, default 1.0)\n"
+        << "  -s=N       Number of slack variables\n"
         << "  -p         Profiling / reserved for future use\n"
+        << "  -kpcg      Treat input as KPCG instance and use internal reader\n"
         << "\n"
         << "Examples:\n"
         << "  " << programName << " problem.lp -v=1\n"

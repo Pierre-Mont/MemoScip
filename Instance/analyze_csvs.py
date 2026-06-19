@@ -13,6 +13,7 @@ It prints all rows (one per instance) and then prints average time and average n
 for each approach (averaging over available values). If `openpyxl` is not available
 the script falls back to writing `combined_results.csv` instead.
 """
+import argparse
 import csv
 import re
 from pathlib import Path
@@ -28,9 +29,11 @@ def find_result_files(dirpath: Path):
 
 def extract_approach(name: str):
     # match results__<opts>__<date>.csv
-    m = re.match(r'results__(.+?)__\d{8}.*\.csv$', name)
+    m = re.match(r'results__(.+?)__(\d{8}).*\.csv$', name)
     if m:
-        return re.sub(r'[^A-Za-z0-9_\-]+', '_', m.group(1))
+        opts = re.sub(r'[^A-Za-z0-9_\-]+', '_', m.group(1))
+        date = m.group(2)
+        return f"{opts}__{date}"
     # fallback: use stem
     return re.sub(r'[^A-Za-z0-9_\-]+', '_', Path(name).stem)
 
@@ -49,8 +52,26 @@ def try_int(s):
         return None
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='Concatenate result CSVs in a directory into a wide table and compute averages.'
+    )
+    parser.add_argument(
+        'directory',
+        nargs='?', 
+        default='.',
+        help='Directory containing result CSV files (default: current directory)'
+    )
+    return parser.parse_args()
+
+
 def main():
-    dirpath = Path('.')
+    args = parse_args()
+    dirpath = Path(args.directory)
+    if not dirpath.exists() or not dirpath.is_dir():
+        print(f"Directory not found or not a directory: {dirpath}")
+        sys.exit(1)
+
     files = find_result_files(dirpath)
     if not files:
         print("No result CSV files found (looking for results__*.csv)")

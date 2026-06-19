@@ -33,6 +33,7 @@ message(STATUS "SCIP_DIR : ${SCIP_DIR}")
 message(STATUS "CMAKE_PREFIX_PATH (SCIP en tête) : ${CMAKE_PREFIX_PATH}")
 
 find_package(SCIP REQUIRED CONFIG)
+find_package(LibLZMA REQUIRED)
 
 add_executable(memoscipl
     src/main.cpp
@@ -40,10 +41,11 @@ add_executable(memoscipl
     src/memoscip_types.cpp
     src/memoscip_dual.cpp
     src/memoscip_events.cpp
+    src/memoscip_reader.cpp
     src/sepa_mycuts.cpp
 )
 
-target_link_libraries(memoscipl PRIVATE libscip)
+target_link_libraries(memoscipl PRIVATE libscip LibLZMA::LibLZMA)
 
 target_include_directories(memoscipl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 

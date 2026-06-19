@@ -3,6 +3,7 @@
 #include "memoscip_dual.h"
 #include "memoscip_events.h"
 #include "memoscip_option.h"
+#include "memoscip_reader.h"
 #include "memoscip_types.h"
 #include "sepa_mycuts.h"
 
@@ -47,9 +48,17 @@ int main(int argc, char** argv)
     SCIP_CALL(SCIPcreate(&scip));
     SCIP_CALL(SCIPincludeDefaultPlugins(scip));
     SCIP_CALL(SCIPcreateProbBasic(scip, "pure_bab"));
-    //read problem filepath
-    SCIP_CALL(SCIPreadProb(scip, filepath.c_str(), NULL));
-
+    // read problem filepath
+    if (g_options.kpcg) {
+        std::string rerr;
+        if (!readKPCGInstance(scip, filepath, rerr)) {
+            std::cerr << "Error reading KPCG instance: " << rerr << std::endl;
+            return 1;
+        }
+    } else {
+        SCIP_CALL(SCIPreadProb(scip, filepath.c_str(), NULL));
+    }
+    
     if (g_options.verbosity < 0)
         g_options.verbosity = 0;
     SCIP_CALL(SCIPsetIntParam(scip, "display/verblevel", g_options.verbosity));
@@ -217,9 +226,8 @@ int main(int argc, char** argv)
             }
         }
     }
-    int nbslack=1000;
     //Creat a pool of slack variables with a dummy constraint to keep them in the problem
-    for (int i = 0; i < nbslack; i++)
+    for (int i = 0; i < g_options.nbslack; i++)
     {
         slack = nullptr;
         char slackname[50];
@@ -297,7 +305,7 @@ int main(int argc, char** argv)
 
     }
     nvars = SCIPgetNVars(scip);
-    g_memoscip.nOriginalVar=nvars-nbslack;
+    g_memoscip.nOriginalVar=nvars-g_options.nbslack;
 
     // Learning event handlers when -l=N (N>=1)
     if (g_options.learning > 0)
@@ -318,7 +326,7 @@ int main(int argc, char** argv)
     vars = SCIPgetVars(scip);
     nvars = SCIPgetNVars(scip);
     //Always prefer branching on varible x_{i1} and not x_{i0}.
-    for (int i = 0; i < nvars-nbslack; ++i)
+    for (int i = 0; i < nvars-g_options.nbslack; ++i)
     {
         v=vars[i];
         objcoefs.push_back(SCIPvarGetObj(v));

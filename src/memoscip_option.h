@@ -23,6 +23,10 @@ struct MemoSCIPRunOptions {
 
     bool INF= true; // True = collect infeasibility certificate, False = do not collect infeasibility certificate
     float minInc = 1.0f;
+    /** Treat the input instance as KPCG format and use internal reader. */
+    bool kpcg = false;
+
+    int nbslack = 0; // Number of slack variables 
 };
 
 /** Parse argv. Expects one instance file path (any non-flag argument) and optional flags. */

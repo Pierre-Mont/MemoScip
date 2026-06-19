@@ -19,5 +19,15 @@ SCIP_RETCODE SolCollector::collect(SCIP* scip)
     SCIP_CALL(SCIPlpiGetSol(lpi, &objval,
         primsol.data(), dualsol.data(),
         activity.data(), redcost.data()));
+    for (size_t i = 0; i < dualsol.size(); ++i)
+    {
+        if(SCIPisDualfeasZero(scip, dualsol[i]))
+            dualsol[i] = 0.0;
+    }
+    for (size_t i = 0; i < redcost.size(); ++i)
+    {
+        if(SCIPisDualfeasZero(scip, redcost[i]))
+            redcost[i] = 0.0;
+    }
     return SCIP_OKAY;
 }

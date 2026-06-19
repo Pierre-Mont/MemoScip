@@ -18,6 +18,21 @@ double roundToDecimals(double val, int decimals) {
     double factor = std::pow(10.0, decimals);
     return std::ceil(val * factor) / factor;
 }
+void Weaken(std::vector<SCIP_Real>& vals){
+      for(size_t i = 0; i < vals.size()-1; ++i )
+      {
+         vals[i] = std::max(0.0,vals[i]);
+      }
+      assert(vals[vals.size()-1]==-1);
+}
+
+void Saturate(std::vector<SCIP_Real>& vals, double rhs){
+      for(size_t i = 0; i < vals.size()-1; ++i )
+      {
+         vals[i] = std::min(vals[i],rhs);
+      }
+      assert(vals[vals.size()-1]==-1);
+}
 
 /** queues a cut to be added in the next separation round */
 SCIP_RETCODE SCIPqueueCut(
@@ -161,20 +176,23 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, double Top)
                                     FALSE,   // removable
                                     FALSE) );// stickingatnode
 
-      SCIP_Real NegCoef=0;
+      /*SCIP_Real NegCoef=0;
       for( size_t i = 0; i < cut.vars.size()-1; ++i )
       {
          if(cut.vals[i]<0 && SCIPvarGetName(cut.vars[i])[2]!='s')
             NegCoef+=cut.vals[i];
          if(SCIPvarGetName(cut.vars[i])[2]=='s')
             NegCoef+=-9000;
-      }
+      }*/
       // Ajouter les variables
+
+      Weaken(cut.vals);
+      Saturate(cut.vals, roundToDecimals(cut.lhs, 5));
       for( size_t i = 0; i < cut.vars.size(); ++i )
       {
          if(SCIPvarGetName(cut.vars[i])[2]!='s'){
             //SCIP_CALL( SCIPaddCoefLinear(scip, cons, cut.vars[i], std::min(cut.lhs - NegCoef, cut.vals[i])) );
-            SCIP_CALL( SCIPaddCoefLinear(scip, cons, cut.vars[i],  std::min(roundToDecimals(cut.vals[i], 5), Top)));
+            SCIP_CALL( SCIPaddCoefLinear(scip, cons, cut.vars[i],  roundToDecimals(cut.vals[i], 5)));
          }
          else
             SCIP_CALL( SCIPaddCoefLinear(scip, cons, cut.vars[i], roundToDecimals(cut.vals[i], 5)) );

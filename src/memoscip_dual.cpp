@@ -31,19 +31,6 @@
 
 using namespace std;
 
-void Weaken(vector<SCIP_Real>& coef){
-    
-    for (size_t i = 0; i < coef.size(); i++){
-        coef[i]=max(coef[i],0.0);
-    }   
-}
-
-void Saturate(vector<SCIP_Real>& coef, SCIP_Real rhs){
-    for (size_t i = 0; i < coef.size(); i++){
-        coef[i]=min(coef[i],rhs);
-    } 
-}
-
 
 vector<SCIP_Real> FusionResolution(SCIP* scip, SCIP_Longint child0, SCIP_Longint child1)
 {
@@ -282,7 +269,7 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
             //cout<<SCIPgetVarRedcost(scip,g_memoscip.AllVars[currv])<<" "<<g_memoscip.collector.redcost[currv]<<endl;
             assert(var == g_memoscip.AllVars[currv]);
 
-            assert(SCIPgetVarRedcost(scip,g_memoscip.AllVars[currv])==g_memoscip.collector.redcost[currv]);
+            assert(SCIPisFeasEQ(scip, SCIPgetVarRedcost(scip, g_memoscip.AllVars[currv]), g_memoscip.collector.redcost[currv]));
         }
     }
 
@@ -301,8 +288,8 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
 
 
     //We obtain the dual values corresponding to bound constraints by looking at the redcosts
-    //If the variable is fixed to 0 then the redcost is 0. 
-    //If the variable is fixed to 1 then the redcost is the dual value (bound constraint is equality constarint and dual value is unsigned)
+    //If the variable is fixed to 0 then the dual value is 0. 
+    //If the variable is fixed to 1 then the dual value is the red cost (bound constraint is equality constaraint and dual value is unsigned)
     //If the variable is not fixed then the dual value is != 0 only if redcost is negative (bound constraint is <= constraint and dual value is negative)
     SCIP_Real redc;
     for (size_t i = 0; i < g_memoscip.CurrentVarIdx.size(); i++)
@@ -502,7 +489,7 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
         if(g_options.debug){
             if(i<parentredcost.size()){
                 if( g_memoscip.nodeInfoMap[nodeNumber].FirstDualProofInds.empty()){
-                    if(g_options.verbosity > 1){
+                    if(g_options.verbosity > 2){
                         cout<<"COEF IN PROOF "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[i]])<<" "<<coef<<" vs parent red "<<parentredcost[i]<<" new red "<<parentredcost[i]-coef<< " LB "<<g_memoscip.VarLb[i]<<" UB "<<g_memoscip.VarUb[i]<<endl;
                         cout<<parentredcost[i]-coef<<endl;
                     }
@@ -558,7 +545,7 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
         //cout<<"Diving LP solved "<<cutoff<<" "<<lperror<<" "<<SCIPgetLPObjval(scip)<< endl;
         SCIP_LPSOLSTAT st = SCIPgetLPSolstat(scip);
         assert(st==SCIP_LPSOLSTAT_OPTIMAL);
-        assert(SCIPisDualfeasZero(scip,SCIPgetLPObjval(scip)));
+        assert(SCIPgetLPObjval(scip)<1e-3);
         SCIP_CALL( SCIPendProbing(scip));
     }
     

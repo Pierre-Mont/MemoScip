@@ -34,6 +34,7 @@ struct NodeInfo {
     SCIP_CONS* objcons = nullptr;
     std::string Status = "Unknown";
     bool LbgUb = false;
+    
     std::pair<std::vector<SCIP_Real>, SCIP_Real> DualProofCoef;
     std::vector<int> DualProofInds;
     std::vector<SCIP_VAR*> DualProofVars;
@@ -79,7 +80,7 @@ struct MemoSCIPContext {
     std::vector<SCIP_Real> VarUb;
     std::vector<SCIP_VAR*> OrderVar;
     std::string FileExt;
-    long long TOP = 100000;
+    long long TOP = 1e+9;
 };
 
 /** Single shared instance; inline (C++17) so no separate .cpp definition is required. */

@@ -21,7 +21,8 @@ struct MyQueue
 };
 
 void SCIPprintQueuedCuts(SCIP* scip, MyQueue* q);
-
+void Weaken(std::vector<SCIP_Real>& vals);
+void Saturate(std::vector<SCIP_Real>& vals, double rhs);
 /** queues a cut to be added in the next separation round */
 SCIP_EXPORT
 SCIP_RETCODE SCIPqueueCut(

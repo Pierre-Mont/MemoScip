@@ -32,6 +32,7 @@
 
 /*---+----1----+----2----+----3----+----4----+----5----+----6----+----7----+----8----+----9----+----0----+----1----+----2*/
 #include <assert.h>
+#include <stdio.h>
 
 #include "scip/def.h"
 #include "scip/set.h"
@@ -61,7 +62,6 @@
 #include "scip/struct_event.h"
 #include "scip/struct_lpexact.h"
 #include "scip/pub_message.h"
-#include "scip/pub_sym.h"
 #include "lpi/lpi.h"
 
 
@@ -1821,7 +1821,6 @@ SCIP_RETCODE treeAddPendingBdchg(
    SCIP_BOUNDTYPE        boundtype,          /**< type of bound: lower or upper bound */
    SCIP_CONS*            infercons,          /**< constraint that deduced the bound change, or NULL */
    SCIP_PROP*            inferprop,          /**< propagator that deduced the bound change, or NULL */
-   SCIP_SYMCOMP*         infersymcomp,       /**< symmetry component that deduced the bound change, or NULL */
    int                   inferinfo,          /**< user information for inference to help resolving the conflict */
    SCIP_Bool             probingchange       /**< is the bound change a temporary setting due to probing? */
    )
@@ -1841,7 +1840,6 @@ SCIP_RETCODE treeAddPendingBdchg(
    tree->pendingbdchgs[tree->npendingbdchgs].boundtype = boundtype;
    tree->pendingbdchgs[tree->npendingbdchgs].infercons = infercons;
    tree->pendingbdchgs[tree->npendingbdchgs].inferprop = inferprop;
-   tree->pendingbdchgs[tree->npendingbdchgs].infersymcomp = infersymcomp;
    tree->pendingbdchgs[tree->npendingbdchgs].inferinfo = inferinfo;
    tree->pendingbdchgs[tree->npendingbdchgs].probingchange = probingchange;
    if( newboundexact != NULL )
@@ -1907,7 +1905,7 @@ SCIP_RETCODE treeAddPendingBdchg(
 
 /** adds bound change with inference information to focus node, child of focus node, or probing node;
  *  if possible, adjusts bound to integral value;
- *  at most one of infercons, inferprop, and infersymcomp may be non-NULL
+ *  at most one of infercons and inferprop may be non-NULL
  */
 SCIP_RETCODE SCIPnodeAddBoundinfer(
    SCIP_NODE*            node,               /**< node to add bound change to */
@@ -1928,7 +1926,6 @@ SCIP_RETCODE SCIPnodeAddBoundinfer(
    SCIP_BOUNDTYPE        boundtype,          /**< type of bound: lower or upper bound */
    SCIP_CONS*            infercons,          /**< constraint that deduced the bound change, or NULL */
    SCIP_PROP*            inferprop,          /**< propagator that deduced the bound change, or NULL */
-   SCIP_SYMCOMP*         infersymcomp,       /**< symmetry component that deduced the bound change, or NULL */
    int                   inferinfo,          /**< user information for inference to help resolving the conflict */
    SCIP_Bool             probingchange       /**< is the bound change a temporary setting due to probing? */
    )
@@ -1977,7 +1974,7 @@ SCIP_RETCODE SCIPnodeAddBoundinfer(
    assert(tree->effectiverootdepth >= 0);
    assert(tree->root != NULL);
    assert(var != NULL);
-   assert(node->active || (infercons == NULL && inferprop == NULL && infersymcomp == NULL));
+   assert(node->active || (infercons == NULL && inferprop == NULL));
    assert((SCIP_NODETYPE)node->nodetype == SCIP_NODETYPE_PROBINGNODE || !probingchange);
    assert((boundtype == SCIP_BOUNDTYPE_LOWER && SCIPsetIsGT(set, newbound, oldlb))
          || (boundtype == SCIP_BOUNDTYPE_LOWER && newbound > oldlb && newbound * oldlb <= 0.0)
@@ -1986,10 +1983,8 @@ SCIP_RETCODE SCIPnodeAddBoundinfer(
 
    SCIPsetDebugMsg(set, "adding boundchange at node %" SCIP_LONGINT_FORMAT " at depth %u to variable <%s>: old bounds=[%g,%g], new %s bound: %g (infer%s=<%s>, inferinfo=%d)\n",
       node->number, node->depth, SCIPvarGetName(var), SCIPvarGetLbLocal(var), SCIPvarGetUbLocal(var),
-      boundtype == SCIP_BOUNDTYPE_LOWER ? "lower" : "upper", newbound,
-      infercons != NULL ? "cons" : (inferprop != NULL ? "prop" : "symcomp"),
-      infercons != NULL ? SCIPconsGetName(infercons) :
-      (inferprop != NULL ? SCIPpropGetName(inferprop) : SCIPsymcompGetName(infersymcomp)), inferinfo);
+      boundtype == SCIP_BOUNDTYPE_LOWER ? "lower" : "upper", newbound, infercons != NULL ? "cons" : "prop",
+      infercons != NULL ? SCIPconsGetName(infercons) : (inferprop != NULL ? SCIPpropGetName(inferprop) : "-"), inferinfo);
 
    /* remember variable as inference variable, and get corresponding active variable, bound and bound type */
    infervar = var;
@@ -2085,8 +2080,8 @@ SCIP_RETCODE SCIPnodeAddBoundinfer(
             SCIPvarGetLbLocal(var), SCIPvarGetUbLocal(var), conflictingdepth);
 
          /* remember the pending bound change */
-         SCIP_CALL( treeAddPendingBdchg(tree, set, node, var, newbound, NULL, boundtype, infercons, inferprop,
-               infersymcomp, inferinfo, probingchange) );
+         SCIP_CALL( treeAddPendingBdchg(tree, set, node, var, newbound, NULL, boundtype, infercons, inferprop, inferinfo,
+               probingchange) );
 
          /* mark the node with the conflicting bound change to be cut off */
          SCIP_CALL( SCIPnodeCutoff(tree->path[conflictingdepth], set, stat, eventfilter, tree, transprob, origprob, reopt, lp, blkmem) );
@@ -2102,7 +2097,7 @@ SCIP_RETCODE SCIPnodeAddBoundinfer(
       SCIPstatIncrement(stat, set, nprobboundchgs);
 
    /* if the node is the root node: change local and global bound immediately */
-   if( SCIPnodeGetDepth(node) <= tree->effectiverootdepth && (tree->effectiverootdepth==0))
+   if( SCIPnodeGetDepth(node) <= tree->effectiverootdepth && 1==0)
    {
       assert(node->active || tree->focusnode == NULL );
       assert(SCIPnodeGetType(node) != SCIP_NODETYPE_PROBINGNODE);
@@ -2160,9 +2155,9 @@ SCIP_RETCODE SCIPnodeAddBoundinfer(
       else
          lpsolval = SCIP_INVALID;
 
-      /* remember the bound change as branching decision (infervar/infercons/inferprop/infersymcomp are not important: use NULL) */
+      /* remember the bound change as branching decision (infervar/infercons/inferprop are not important: use NULL) */
       SCIP_CALL( SCIPdomchgAddBoundchg(&node->domchg, blkmem, set, var, newbound, NULL, boundtype, SCIP_BOUNDCHGTYPE_BRANCHING,
-            lpsolval, NULL, NULL, NULL, NULL, 0, inferboundtype) );
+            lpsolval, NULL, NULL, NULL, 0, inferboundtype) );
 
       if( SCIPnodeGetType(node) != SCIP_NODETYPE_PROBINGNODE )
          SCIPdomchgAddCurrentCertificateIndex(node->domchg, stat->certificate);
@@ -2190,11 +2185,10 @@ SCIP_RETCODE SCIPnodeAddBoundinfer(
    {
       /* check the inferred bound change on the debugging solution */
       SCIP_CALL( SCIPdebugCheckInference(blkmem, set, node, var, newbound, boundtype) ); /*lint !e506 !e774*/
-
       /* remember the bound change as inference (lpsolval is not important: use 0.0) */
       SCIP_CALL( SCIPdomchgAddBoundchg(&node->domchg, blkmem, set, var, newbound, NULL, boundtype,
-            infercons != NULL ? SCIP_BOUNDCHGTYPE_CONSINFER : (infersymcomp != NULL ? SCIP_BOUNDCHGTYPE_SYMINFER : SCIP_BOUNDCHGTYPE_PROPINFER),
-            0.0, infervar, infercons, inferprop, infersymcomp, inferinfo, inferboundtype) );
+            infercons != NULL ? SCIP_BOUNDCHGTYPE_CONSINFER : SCIP_BOUNDCHGTYPE_PROPINFER,
+            0.0, infervar, infercons, inferprop, inferinfo, inferboundtype) );
 
       if( SCIPnodeGetType(node) != SCIP_NODETYPE_PROBINGNODE )
          SCIPdomchgAddCurrentCertificateIndex(node->domchg, stat->certificate);
@@ -2251,7 +2245,6 @@ SCIP_RETCODE SCIPnodeAddBoundinferExact(
    SCIP_BOUNDTYPE        boundtype,          /**< type of bound: lower or upper bound */
    SCIP_CONS*            infercons,          /**< constraint that deduced the bound change, or NULL */
    SCIP_PROP*            inferprop,          /**< propagator that deduced the bound change, or NULL */
-   SCIP_SYMCOMP*         infersymcomp,       /**< symmetry component that deduced the bound change, or NULL */
    int                   inferinfo,          /**< user information for inference to help resolving the conflict */
    SCIP_Bool             probingchange       /**< is the bound change a temporary setting due to probing? */
    )
@@ -2406,8 +2399,8 @@ SCIP_RETCODE SCIPnodeAddBoundinferExact(
             SCIPvarGetLbLocalExact(var), SCIPvarGetUbLocalExact(var), conflictingdepth);
 
          /* remember the pending bound change */
-         SCIP_CALL( treeAddPendingBdchg(tree, set, node, var, newboundreal, newbound, boundtype, infercons, inferprop,
-               infersymcomp, inferinfo, probingchange) );
+         SCIP_CALL( treeAddPendingBdchg(tree, set, node, var, newboundreal, newbound, boundtype, infercons, inferprop, inferinfo,
+               probingchange) );
 
          /* mark the node with the conflicting bound change to be cut off */
          SCIP_CALL( SCIPnodeCutoff(tree->path[conflictingdepth], set, stat, eventfilter, tree, transprob, origprob, reopt, lpexact->fplp, blkmem) );
@@ -2474,7 +2467,7 @@ SCIP_RETCODE SCIPnodeAddBoundinferExact(
 
       /* remember the bound change as branching decision (infervar/infercons/inferprop are not important: use NULL) */
       SCIP_CALL( SCIPdomchgAddBoundchg(&node->domchg, blkmem, set, var, newboundreal, SCIPrationalIsIntegral(newbound) ? NULL : newbound, boundtype, SCIP_BOUNDCHGTYPE_BRANCHING,
-            lpsolval, NULL, NULL, NULL, NULL, 0, inferboundtype) );
+            lpsolval, NULL, NULL, NULL, 0, inferboundtype) );
 
       if( SCIPnodeGetType(node) != SCIP_NODETYPE_PROBINGNODE )
          SCIPdomchgAddCurrentCertificateIndex(node->domchg, stat->certificate);
@@ -2505,7 +2498,7 @@ SCIP_RETCODE SCIPnodeAddBoundinferExact(
       /* remember the bound change as inference (lpsolval is not important: use 0.0) */
       SCIP_CALL( SCIPdomchgAddBoundchg(&node->domchg, blkmem, set, var, newboundreal, SCIPrationalIsIntegral(newbound) ? NULL : newbound, boundtype,
             infercons != NULL ? SCIP_BOUNDCHGTYPE_CONSINFER : SCIP_BOUNDCHGTYPE_PROPINFER,
-            0.0, infervar, infercons, inferprop, infersymcomp, inferinfo, inferboundtype) );
+            0.0, infervar, infercons, inferprop, inferinfo, inferboundtype) );
 
       if( SCIPnodeGetType(node) != SCIP_NODETYPE_PROBINGNODE )
          SCIPdomchgAddCurrentCertificateIndex(node->domchg, stat->certificate);
@@ -2564,7 +2557,7 @@ SCIP_RETCODE SCIPnodeAddBoundchg(
    )
 {
    SCIP_CALL( SCIPnodeAddBoundinfer(node, blkmem, set, stat, transprob, origprob, tree, reopt, lp, branchcand, eventqueue,
-         eventfilter, cliquetable, var, newbound, boundtype, NULL, NULL, NULL, 0, probingchange) );
+         eventfilter, cliquetable, var, newbound, boundtype, NULL, NULL, 0, probingchange) );
 
    return SCIP_OKAY;
 }
@@ -2593,7 +2586,7 @@ SCIP_RETCODE SCIPnodeAddBoundchgExact(
    )
 {
    SCIP_CALL( SCIPnodeAddBoundinferExact(node, blkmem, set, stat, transprob, origprob, tree, reopt, lpexact, branchcand,
-         eventqueue, eventfilter, cliquetable, var, newbound, boundtype, NULL, NULL, NULL, 0, probingchange) );
+         eventqueue, eventfilter, cliquetable, var, newbound, boundtype, NULL, NULL, 0, probingchange) );
 
    return SCIP_OKAY;
 }
@@ -2830,8 +2823,8 @@ SCIP_RETCODE treeApplyPendingBdchgs(
 
          SCIP_CALL( SCIPnodeAddBoundinfer(tree->pendingbdchgs[i].node, blkmem, set, stat, transprob, origprob, tree, reopt,
                lp, branchcand, eventqueue, eventfilter, cliquetable, var, tree->pendingbdchgs[i].newbound, tree->pendingbdchgs[i].boundtype,
-               tree->pendingbdchgs[i].infercons, tree->pendingbdchgs[i].inferprop, tree->pendingbdchgs[i].infersymcomp,
-               tree->pendingbdchgs[i].inferinfo, tree->pendingbdchgs[i].probingchange) );
+               tree->pendingbdchgs[i].infercons, tree->pendingbdchgs[i].inferprop, tree->pendingbdchgs[i].inferinfo,
+               tree->pendingbdchgs[i].probingchange) );
          assert(tree->npendingbdchgs == npendingbdchgs); /* this time, the bound change can be applied! */
       }
    }
@@ -3214,8 +3207,7 @@ SCIP_RETCODE SCIPnodePropagateImplics(
 
             /* apply the implication */
             SCIP_CALL( SCIPnodeAddBoundinfer(node, blkmem, set, stat, transprob, origprob, tree, reopt, lp, branchcand,
-                  eventqueue, eventfilter, cliquetable, implvars[j], implbounds[j], impltypes[j], NULL, NULL, NULL,
-                  0, FALSE) );
+                  eventqueue, eventfilter, cliquetable, implvars[j], implbounds[j], impltypes[j], NULL, NULL, 0, FALSE) );
          }
 
          /* apply cliques */
@@ -3274,9 +3266,8 @@ SCIP_RETCODE SCIPnodePropagateImplics(
 
                /* apply the clique implication */
                SCIP_CALL( SCIPnodeAddBoundinfer(node, blkmem, set, stat, transprob, origprob, tree, reopt, lp, branchcand,
-                     eventqueue, eventfilter, cliquetable, vars[k],
-                     (SCIP_Real)(!values[k]), values[k] ? SCIP_BOUNDTYPE_UPPER : SCIP_BOUNDTYPE_LOWER, NULL, NULL, NULL,
-                     0, FALSE) );
+                     eventqueue, eventfilter, cliquetable, vars[k], (SCIP_Real)(!values[k]), values[k] ? SCIP_BOUNDTYPE_UPPER : SCIP_BOUNDTYPE_LOWER,
+                     NULL, NULL, 0, FALSE) );
             }
          }
       }
@@ -5280,47 +5271,41 @@ SCIP_RETCODE SCIPnodeFocus(
       assert(tree->focusnode != NULL);
       assert(SCIPnodeGetType(tree->focusnode) == SCIP_NODETYPE_FOCUSNODE);
 
-      /* update exact lower bounds of focus and children */
+      /* update exact lower bound of focus */
       if( set->exact_enable )
       {
          SCIP_RATIONAL* focuslowerboundexact;
-         SCIP_RATIONAL* childrenlowerboundexact;
-         SCIP_RATIONAL* nodelowerboundexact;
+         SCIP_RATIONAL* childlowerboundexact;
 
-         focuslowerboundexact = SCIPnodeGetLowerboundExact(tree->focusnode);
-         SCIP_CALL( SCIPrationalCreateBlock(blkmem, &childrenlowerboundexact) );
-         SCIPrationalSetInfinity(childrenlowerboundexact);
+         SCIP_CALL( SCIPrationalCreateBlock(blkmem, &focuslowerboundexact) );
+         SCIPrationalSetInfinity(focuslowerboundexact);
 
          for( c = 0; c < tree->nchildren; ++c )
          {
-            nodelowerboundexact = SCIPnodeGetLowerboundExact(tree->children[c]);
-            if( SCIPrationalIsGT(childrenlowerboundexact, nodelowerboundexact) )
-               SCIPrationalSetRational(childrenlowerboundexact, nodelowerboundexact);
-            SCIP_CALL( SCIPnodeUpdateLowerbound(tree->children[c], stat, set, eventfilter, tree, transprob, origprob, SCIP_INVALID, focuslowerboundexact) );
+            childlowerboundexact = SCIPnodeGetLowerboundExact(tree->children[c]);
+            if( SCIPrationalIsGT(focuslowerboundexact, childlowerboundexact) )
+               SCIPrationalSetRational(focuslowerboundexact, childlowerboundexact);
          }
 
-         SCIP_CALL( SCIPnodeUpdateLowerbound(tree->focusnode, stat, set, eventfilter, tree, transprob, origprob, SCIP_INVALID, childrenlowerboundexact) );
-         SCIPrationalFreeBlock(blkmem, &childrenlowerboundexact);
+         SCIP_CALL( SCIPnodeUpdateLowerbound(tree->focusnode, stat, set, eventfilter, tree, transprob, origprob, SCIP_INVALID, focuslowerboundexact) );
+         SCIPrationalFreeBlock(blkmem, &focuslowerboundexact);
       }
-      /* update real lower bounds of focus and children */
+      /* update real lower bound of focus */
       else
       {
          SCIP_Real focuslowerbound;
-         SCIP_Real childrenlowerbound;
-         SCIP_Real nodelowerbound;
+         SCIP_Real childlowerbound;
 
-         focuslowerbound = SCIPnodeGetLowerbound(tree->focusnode);
-         childrenlowerbound = SCIPsetInfinity(set);
+         focuslowerbound = SCIPsetInfinity(set);
 
          for( c = 0; c < tree->nchildren; ++c )
          {
-            nodelowerbound = SCIPnodeGetLowerbound(tree->children[c]);
-            if( childrenlowerbound > nodelowerbound )
-               childrenlowerbound = nodelowerbound;
-            SCIP_CALL( SCIPnodeUpdateLowerbound(tree->children[c], stat, set, eventfilter, tree, transprob, origprob, focuslowerbound, NULL) );
+            childlowerbound = SCIPnodeGetLowerbound(tree->children[c]);
+            if( focuslowerbound > childlowerbound )
+               focuslowerbound = childlowerbound;
          }
 
-         SCIP_CALL( SCIPnodeUpdateLowerbound(tree->focusnode, stat, set, eventfilter, tree, transprob, origprob, childrenlowerbound, NULL) );
+         SCIP_CALL( SCIPnodeUpdateLowerbound(tree->focusnode, stat, set, eventfilter, tree, transprob, origprob, focuslowerbound, NULL) );
       }
 
       /* check whether the next focus node is a child of the old focus node */
@@ -5528,7 +5513,6 @@ SCIP_RETCODE SCIPnodeFocus(
    tree->focussubroot = subroot;
    tree->focuslpconstructed = FALSE;
    lp->resolvelperror = FALSE;
-
    /* track the path from the old focus node to the new node, free dead end, set new focus node, and perform domain and constraint set changes */
    SCIP_CALL( treeSwitchPath(tree, reopt, blkmem, set, stat, transprob, origprob, primal, lp, branchcand, conflict,
          eventqueue, eventfilter, cliquetable, fork, *node, cutoff) );
@@ -5537,7 +5521,6 @@ SCIP_RETCODE SCIPnodeFocus(
    assert(*node != NULL || tree->pathlen == 0);
    assert(*node == NULL || tree->pathlen-1 <= (int)(*node)->depth);
    assert(*cutoff || SCIPtreeIsPathComplete(tree));
-
    return SCIP_OKAY;
 }
 
@@ -8288,6 +8271,13 @@ SCIP_Real SCIPtreeGetLowerbound(
    /* get the lower bound from the queue */
    lowerbound = SCIPnodepqGetLowerbound(tree->leaves, set);
 
+   /* compare lower bound with children */
+   for( i = 0; i < tree->nchildren; ++i )
+   {
+      assert(tree->children[i] != NULL);
+      lowerbound = MIN(lowerbound, tree->children[i]->lowerbound);
+   }
+
    /* compare lower bound with siblings */
    for( i = 0; i < tree->nsiblings; ++i )
    {
@@ -8321,6 +8311,14 @@ SCIP_RATIONAL* SCIPtreeGetLowerboundExact(
 
    /* get the lower bound from the queue */
    lowerbound = SCIPnodepqGetLowerboundExact(tree->leaves, set);
+
+   /* compare lower bound with children */
+   for( i = 0; i < tree->nchildren; ++i )
+   {
+      assert(tree->children[i] != NULL);
+      if( lowerbound == NULL || SCIPrationalIsGT(lowerbound, tree->children[i]->lowerboundexact) )
+         lowerbound = tree->children[i]->lowerboundexact;
+   }
 
    /* compare lower bound with siblings */
    for( i = 0; i < tree->nsiblings; ++i )
@@ -8633,19 +8631,17 @@ SCIP_DOMCHG* SCIPnodeGetDomchg(
    return node->domchg;
 }
 
-/** counts the number of bound changes due to branching, constraint propagation, propagation, and symmetry handling */
+/** counts the number of bound changes due to branching, constraint propagation, and propagation */
 void SCIPnodeGetNDomchg(
    SCIP_NODE*            node,               /**< node */
    int*                  nbranchings,        /**< pointer to store number of branchings (or NULL if not needed) */
    int*                  nconsprop,          /**< pointer to store number of constraint propagations (or NULL if not needed) */
-   int*                  nprop,              /**< pointer to store number of propagations (or NULL if not needed) */
-   int*                  nsymprop            /**< pointer to store number of symmetry propagations (or NULL if not needed) */
+   int*                  nprop               /**< pointer to store number of propagations (or NULL if not needed) */
    )
 {  /*lint --e{641}*/
    SCIP_Bool count_branchings;
    SCIP_Bool count_consprop;
    SCIP_Bool count_prop;
-   SCIP_Bool count_symprop;
    int i;
 
    assert(node != NULL);
@@ -8653,7 +8649,6 @@ void SCIPnodeGetNDomchg(
    count_branchings = (nbranchings != NULL);
    count_consprop = (nconsprop != NULL);
    count_prop = (nprop != NULL);
-   count_symprop = (nsymprop != NULL);
 
    /* set counter to zero */
    if( count_branchings )
@@ -8662,8 +8657,6 @@ void SCIPnodeGetNDomchg(
       *nconsprop = 0;  /* cppcheck-suppress nullPointer */
    if( count_prop )
       *nprop = 0;  /* cppcheck-suppress nullPointer */
-   if( count_symprop )
-      *nsymprop = 0;  /* cppcheck-suppress nullPointer */
 
    if( node->domchg == NULL )
       return;
@@ -8680,23 +8673,16 @@ void SCIPnodeGetNDomchg(
 
    for( ; i < (int) node->domchg->domchgbound.nboundchgs; ++i )
    {
-      assert(node->domchg->domchgbound.boundchgs[i].boundchgtype == SCIP_BOUNDCHGTYPE_CONSINFER
-         || node->domchg->domchgbound.boundchgs[i].boundchgtype == SCIP_BOUNDCHGTYPE_PROPINFER
-         ||  node->domchg->domchgbound.boundchgs[i].boundchgtype == SCIP_BOUNDCHGTYPE_SYMINFER);
+      assert(node->domchg->domchgbound.boundchgs[i].boundchgtype == SCIP_BOUNDCHGTYPE_CONSINFER || node->domchg->domchgbound.boundchgs[i].boundchgtype == SCIP_BOUNDCHGTYPE_PROPINFER);
       if( node->domchg->domchgbound.boundchgs[i].boundchgtype == SCIP_BOUNDCHGTYPE_CONSINFER )
       {
          if( count_consprop )
             ++(*nconsprop);
       }
-      else if( node->domchg->domchgbound.boundchgs[i].boundchgtype == SCIP_BOUNDCHGTYPE_PROPINFER )
+      else
       {
          if( count_prop )
             ++(*nprop);
-      }
-      else
-      {
-         if( count_symprop )
-            ++(*nsymprop);
       }
    }
 }
@@ -9021,7 +9007,7 @@ void SCIPnodeGetPropsBeforeDual(
    /* get index of first bound change, after the branching decisions, that is not from a known constraint or propagator (CONSINFER or PROPINFER without reason)
     * count the number of bound changes because of constraint propagation
     */
-   SCIPnodeGetNDomchg(node, &nbranchings, NULL, NULL, NULL);
+   SCIPnodeGetNDomchg(node, &nbranchings, NULL, NULL);
    for( i = nbranchings; i < nboundchgs; ++i )
    {
       /* as we start at nbranchings, there should be no BRANCHING boundchanges anymore */

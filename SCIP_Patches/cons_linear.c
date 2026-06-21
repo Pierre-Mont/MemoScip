@@ -91,6 +91,8 @@
 #include "scip/symmetry_graph.h"
 #include "symmetry/struct_symmetry.h"
 #include "scip/dbldblarith.h"
+#include <stdio.h>
+
 
 #define CONSHDLR_NAME          "linear"
 #define CONSHDLR_DESC          "linear constraints of the form  lhs <= a^T x <= rhs"
@@ -4103,8 +4105,7 @@ SCIP_RETCODE performVarDeletions(
    assert(conshdlr != NULL);
    assert(conss != NULL);
    assert(nconss >= 0);
-
-   SCIP_STRINGEQ( SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME, SCIP_INVALIDCALL );
+   assert(strcmp(SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME) == 0);
 
    /* iterate over all constraints */
    for( i = 0; i < nconss; i++ )
@@ -5251,6 +5252,7 @@ SCIP_RETCODE tightenVarUb(
    SCIP_Bool             force               /**< should a possible bound change be forced even if below bound strengthening tolerance */
    )
 {
+   
    SCIP_CONSDATA* consdata;
    SCIP_VAR* var;
    SCIP_Real lb;
@@ -5336,7 +5338,6 @@ SCIP_RETCODE tightenVarLb(
 
    ub = SCIPvarGetUbLocal(var);
    newlb = SCIPadjustedVarLb(scip, var, newlb);
-
    if( force || SCIPisLbBetter(scip, newlb, oldlb, ub) )
    {
       SCIP_VARTYPE vartype = SCIPvarGetType(var);
@@ -5398,7 +5399,6 @@ SCIP_RETCODE tightenVarBoundsEasy(
    assert(cons != NULL);
    assert(cutoff != NULL);
    assert(nchgbds != NULL);
-
    /* we cannot tighten variables' bounds, if the constraint may be not complete */
    if( SCIPconsIsModifiable(cons) )
       return SCIP_OKAY;
@@ -5415,6 +5415,7 @@ SCIP_RETCODE tightenVarBoundsEasy(
    /* we cannot tighten bounds of multi-aggregated variables */
    if( SCIPvarGetStatus(var) == SCIP_VARSTATUS_MULTAGGR )
       return SCIP_OKAY;
+   
 
    val = consdata->vals[pos];
    lhs = consdata->lhs;
@@ -5434,7 +5435,6 @@ SCIP_RETCODE tightenVarBoundsEasy(
    if( !consdata->validminact )
       consdataRecomputeMinactivity(scip, consdata);
    assert(consdata->validminact);
-
    if( val > 0.0 )
    {
       /* check, if we can tighten the variable's upper bound */
@@ -5473,7 +5473,6 @@ SCIP_RETCODE tightenVarBoundsEasy(
 
             /* compute new upper bound */
             newub = lb + (slack / val);
-
             SCIP_CALL( tightenVarUb(scip, cons, pos, PROPRULE_1_RHS, newub, ub, cutoff, nchgbds, force) );
 
             if( *cutoff )
@@ -5490,7 +5489,7 @@ SCIP_RETCODE tightenVarBoundsEasy(
       }
 
       /* check, if we can tighten the variable's lower bound */
-      if( !SCIPisInfinity(scip, -lhs) && SCIPvarGetName(var)[2]!='s')
+      if( !SCIPisInfinity(scip, -lhs)  && SCIPvarGetName(var)[2]!='s')
       {
          SCIP_Real slack;
          SCIP_Real alpha;
@@ -5522,14 +5521,12 @@ SCIP_RETCODE tightenVarBoundsEasy(
 
          alpha = val * (ub - lb);
          assert(!SCIPisNegative(scip, alpha));
-
          if( SCIPisSumGT(scip, alpha, slack) || (force && SCIPisGT(scip, alpha, slack)) )
          {
             SCIP_Real newlb;
 
             /* compute new lower bound */
             newlb = ub - (slack / val);
-
             SCIP_CALL( tightenVarLb(scip, cons, pos, PROPRULE_1_LHS, newlb, lb, cutoff, nchgbds, force) );
 
             if( *cutoff )
@@ -6728,7 +6725,7 @@ SCIP_RETCODE tightenVarBounds(
    /* we cannot tighten variables' bounds, if the constraint may be not complete */
    if( SCIPconsIsModifiable(cons) )
       return SCIP_OKAY;
-
+   
    consdata = SCIPconsGetData(cons);
    assert(consdata != NULL);
    assert(0 <= pos && pos < consdata->nvars);
@@ -6760,7 +6757,7 @@ SCIP_RETCODE tightenVarBounds(
       /* check, if we can tighten the variable's bounds reliably, therefore only consider sides which are small or
        * relatively different to the residual activity bound to avoid cancellation leading to numerical difficulties
        */
-      if(SCIPvarGetName(var)[2]!='s' && !isminsettoinfinity && !SCIPisInfinity(scip, rhs) && ismintight
+      if( SCIPvarGetName(var)[2] !='s' && !isminsettoinfinity && !SCIPisInfinity(scip, rhs) && ismintight
          && ( SCIPisLT(scip, ABS(rhs), 1.0) || !SCIPisEQ(scip, minresactivity / rhs, 1.0) ) )
       {
          SCIP_Real newub;
@@ -6814,7 +6811,7 @@ SCIP_RETCODE tightenVarBounds(
          }
       }
 
-      if(SCIPvarGetName(var)[2]!='s'&& !ismaxsettoinfinity && !SCIPisInfinity(scip, -lhs) && ismaxtight
+      if(SCIPvarGetName(var)[2]!='s' && !ismaxsettoinfinity && !SCIPisInfinity(scip, -lhs) && ismaxtight
          && ( SCIPisLT(scip, ABS(lhs), 1.0) || !SCIPisEQ(scip, maxresactivity / lhs, 1.0) ) )
       {
          SCIP_Real newlb;
@@ -6867,7 +6864,7 @@ SCIP_RETCODE tightenVarBounds(
       /* check, if we can tighten the variable's bounds reliably, therefore only consider sides which are small or
        * relatively different to the residual activity bound to avoid cancellation leading to numerical difficulties
        */
-      if(SCIPvarGetName(var)[2]!='s' && !isminsettoinfinity && !SCIPisInfinity(scip, rhs) && ismintight
+      if( SCIPvarGetName(var)[2] !='s' && !isminsettoinfinity && !SCIPisInfinity(scip, rhs) && ismintight
          && ( SCIPisLT(scip, ABS(rhs), 1.0) || !SCIPisEQ(scip, minresactivity / rhs, 1.0) ) )
       {
          SCIP_Real newlb;
@@ -6919,7 +6916,7 @@ SCIP_RETCODE tightenVarBounds(
          }
       }
 
-      if( SCIPvarGetName(var)[2]!='s' && !ismaxsettoinfinity && !SCIPisInfinity(scip, -lhs) && ismaxtight
+      if( SCIPvarGetName(var)[2] !='s' && !ismaxsettoinfinity && !SCIPisInfinity(scip, -lhs) && ismaxtight
          && ( SCIPisLT(scip, ABS(lhs), 1.0) || !SCIPisEQ(scip, maxresactivity / lhs, 1.0) ) )
       {
          SCIP_Real newub;
@@ -7015,7 +7012,6 @@ SCIP_RETCODE tightenBounds(
    SCIP_CALL( applyFixings(scip, cons, cutoff) );
    if( *cutoff )
       return SCIP_OKAY;
-
    /* check if constraint has any chances of tightening bounds */
    if( !canTightenBounds(cons) )
       return SCIP_OKAY;
@@ -7054,7 +7050,6 @@ SCIP_RETCODE tightenBounds(
    /* this may happen if all variables are fixed */
    if( SCIPisFeasZero(scip, consdata->maxactdelta) )
       return SCIP_OKAY;
-
    if( !SCIPisInfinity(scip, consdata->maxactdelta) )
    {
       SCIP_Real slack;
@@ -7074,7 +7069,6 @@ SCIP_RETCODE tightenBounds(
 
       slack = (SCIPisInfinity(scip, consdata->rhs) || isminsettoinfinity) ? SCIPinfinity(scip) : (consdata->rhs - minactivity);
       surplus = (SCIPisInfinity(scip, -consdata->lhs) || ismaxsettoinfinity) ? SCIPinfinity(scip) : (maxactivity - consdata->lhs);
-
       /* check if the constraint will propagate */
       if( SCIPisLE(scip, consdata->maxactdelta, MIN(slack, surplus)) )
          return SCIP_OKAY;
@@ -7082,7 +7076,6 @@ SCIP_RETCODE tightenBounds(
 
    /* check if we can use fast implementation for easy and numerically well behaved cases */
    easycase = SCIPisLT(scip, consdata->maxactdelta, maxeasyactivitydelta);
-
    /* as long as the bounds might be tightened again, try to tighten them; abort after a maximal number of rounds */
    lastchange = -1;
 
@@ -7090,7 +7083,7 @@ SCIP_RETCODE tightenBounds(
    oldnchgbds = 0;
    oldnchgbdstotal = *nchgbds;
 #endif
-
+  
    for( nrounds = 0; (force || consdata->boundstightened < tightenmode) && nrounds < MAXTIGHTENROUNDS; ++nrounds ) /*lint !e574*/
    {
       /* ensure that the variables are properly sorted
@@ -7113,7 +7106,6 @@ SCIP_RETCODE tightenBounds(
       while( v < nvars && v != lastchange && !(*cutoff) )
       {
          oldnchgbds = *nchgbds;
-
          if( easycase )
          {
             SCIP_CALL( tightenVarBoundsEasy(scip, cons, v, cutoff, nchgbds, force) );
@@ -7651,7 +7643,6 @@ SCIP_RETCODE propagateCons(
    assert(nchgbds != NULL);
 
    /*SCIPdebugMsg(scip, "propagating linear constraint <%s>\n", SCIPconsGetName(cons));*/
-
    consdata = SCIPconsGetData(cons);
    assert(consdata != NULL);
 
@@ -7672,6 +7663,8 @@ SCIP_RETCODE propagateCons(
    }
 
    *cutoff = FALSE;
+  
+
 
    /* we can only infer activity bounds of the linear constraint, if it is not modifiable */
    if( !SCIPconsIsModifiable(cons) )
@@ -14972,9 +14965,8 @@ SCIP_RETCODE enforceConstraint(
 
    assert(scip != NULL);
    assert(conshdlr != NULL);
+   assert(strcmp(SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME) == 0);
    assert(result != NULL);
-
-   SCIP_STRINGEQ( SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME, SCIP_INVALIDCALL );
 
    conshdlrdata = SCIPconshdlrGetData(conshdlr);
    assert(conshdlrdata != NULL);
@@ -15104,8 +15096,7 @@ SCIP_DECL_CONSHDLRCOPY(conshdlrCopyLinear)
 {  /*lint --e{715}*/
    assert(scip != NULL);
    assert(conshdlr != NULL);
-
-   SCIP_STRINGEQ( SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME, SCIP_INVALIDCALL );
+   assert(strcmp(SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME) == 0);
 
    /* call inclusion method of constraint handler */
    SCIP_CALL( SCIPincludeConshdlrLinear(scip) );
@@ -15123,8 +15114,7 @@ SCIP_DECL_CONSFREE(consFreeLinear)
 
    assert(scip != NULL);
    assert(conshdlr != NULL);
-
-   SCIP_STRINGEQ( SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME, SCIP_INVALIDCALL );
+   assert(strcmp(SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME) == 0);
 
    /* free constraint handler data */
    conshdlrdata = SCIPconshdlrGetData(conshdlr);
@@ -15739,9 +15729,8 @@ SCIP_DECL_CONSDEACTIVE(consDeactiveLinear)
 
    assert(scip != NULL);
    assert(conshdlr != NULL);
+   assert(strcmp(SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME) == 0);
    assert(cons != NULL );
-
-   SCIP_STRINGEQ( SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME, SCIP_INVALIDCALL );
 
    /* get constraint data */
    consdata = SCIPconsGetData(cons);
@@ -15783,8 +15772,7 @@ SCIP_DECL_CONSDELETE(consDeleteLinear)
 {  /*lint --e{715}*/
    assert(scip != NULL);
    assert(conshdlr != NULL);
-
-   SCIP_STRINGEQ( SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME, SCIP_INVALIDCALL );
+   assert(strcmp(SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME) == 0);
 
    if( (*consdata)->eventdata != NULL )
    {
@@ -15816,11 +15804,10 @@ SCIP_DECL_CONSTRANS(consTransLinear)
 
    assert(scip != NULL);
    assert(conshdlr != NULL);
+   assert(strcmp(SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME) == 0);
    assert(SCIPgetStage(scip) == SCIP_STAGE_TRANSFORMING);
    assert(sourcecons != NULL);
    assert(targetcons != NULL);
-
-   SCIP_STRINGEQ( SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME, SCIP_INVALIDCALL );
 
    sourcedata = SCIPconsGetData(sourcecons);
    assert(sourcedata != NULL);
@@ -15858,8 +15845,7 @@ SCIP_DECL_CONSINITLP(consInitlpLinear)
    int c;
 
    assert(scip != NULL);
-
-   SCIP_STRINGEQ( SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME, SCIP_INVALIDCALL );
+   assert(strcmp(SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME) == 0);
 
    *infeasible = FALSE;
 
@@ -15892,9 +15878,8 @@ SCIP_DECL_CONSSEPALP(consSepalpLinear)
 
    assert(scip != NULL);
    assert(conshdlr != NULL);
+   assert(strcmp(SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME) == 0);
    assert(result != NULL);
-
-   SCIP_STRINGEQ( SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME, SCIP_INVALIDCALL );
 
    conshdlrdata = SCIPconshdlrGetData(conshdlr);
    assert(conshdlrdata != NULL);
@@ -15959,9 +15944,8 @@ SCIP_DECL_CONSSEPASOL(consSepasolLinear)
 
    assert(scip != NULL);
    assert(conshdlr != NULL);
+   assert(strcmp(SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME) == 0);
    assert(result != NULL);
-
-   SCIP_STRINGEQ( SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME, SCIP_INVALIDCALL );
 
    conshdlrdata = SCIPconshdlrGetData(conshdlr);
    assert(conshdlrdata != NULL);
@@ -16033,9 +16017,8 @@ SCIP_DECL_CONSENFOPS(consEnfopsLinear)
 
    assert(scip != NULL);
    assert(conshdlr != NULL);
+   assert(strcmp(SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME) == 0);
    assert(result != NULL);
-
-   SCIP_STRINGEQ( SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME, SCIP_INVALIDCALL );
 
    conshdlrdata = SCIPconshdlrGetData(conshdlr);
    assert(conshdlrdata != NULL);
@@ -16081,9 +16064,8 @@ SCIP_DECL_CONSCHECK(consCheckLinear)
 
    assert(scip != NULL);
    assert(conshdlr != NULL);
+   assert(strcmp(SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME) == 0);
    assert(result != NULL);
-
-   SCIP_STRINGEQ( SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME, SCIP_INVALIDCALL );
 
    *result = SCIP_FEASIBLE;
 
@@ -16145,9 +16127,8 @@ SCIP_DECL_CONSPROP(consPropLinear)
 
    assert(scip != NULL);
    assert(conshdlr != NULL);
+   assert(strcmp(SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME) == 0);
    assert(result != NULL);
-
-   SCIP_STRINGEQ( SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME, SCIP_INVALIDCALL );
 
    conshdlrdata = SCIPconshdlrGetData(conshdlr);
    assert(conshdlrdata != NULL);
@@ -16230,9 +16211,10 @@ SCIP_DECL_CONSPRESOL(consPresolLinear)
 
    assert(scip != NULL);
    assert(conshdlr != NULL);
+   assert(strcmp(SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME) == 0);
    assert(result != NULL);
 
-   SCIP_STRINGEQ( SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME, SCIP_INVALIDCALL );
+   /*debugMsg(scip, "Presol method of linear constraints\n");*/
 
    /* remember old preprocessing counters */
    cutoff = FALSE;
@@ -16243,8 +16225,6 @@ SCIP_DECL_CONSPRESOL(consPresolLinear)
    oldnupgdconss = *nupgdconss;
    oldnchgcoefs = *nchgcoefs;
    oldnchgsides = *nchgsides;
-
-   /*debugMsg(scip, "Presol method of linear constraints\n");*/
 
    /* get constraint handler data */
    conshdlrdata = SCIPconshdlrGetData(conshdlr);
@@ -17176,9 +17156,8 @@ SCIP_DECL_EVENTEXEC(eventExecLinear)
    assert(scip != NULL);
    assert(eventhdlr != NULL);
    assert(eventdata != NULL);
+   assert(strcmp(SCIPeventhdlrGetName(eventhdlr), EVENTHDLR_NAME) == 0);
    assert(event != NULL);
-
-   SCIP_STRINGEQ( SCIPeventhdlrGetName(eventhdlr), EVENTHDLR_NAME, SCIP_INVALIDCALL );
 
    cons = eventdata->cons;
    assert(cons != NULL);
@@ -17382,10 +17361,9 @@ SCIP_DECL_CONFLICTEXEC(conflictExecLinear)
 
    assert(scip != NULL);
    assert(conflicthdlr != NULL);
+   assert(strcmp(SCIPconflicthdlrGetName(conflicthdlr), CONFLICTHDLR_NAME) == 0);
    assert(bdchginfos != NULL || nbdchginfos == 0);
    assert(result != NULL);
-
-   SCIP_STRINGEQ( SCIPconflicthdlrGetName(conflicthdlr), CONFLICTHDLR_NAME, SCIP_INVALIDCALL );
 
    /* don't process already resolved conflicts */
    if( resolved )
@@ -18088,7 +18066,11 @@ SCIP_RETCODE SCIPaddCoefLinear(
    assert(cons != NULL);
    assert(var != NULL);
 
-   SCIP_STRINGEQ( SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME, SCIP_INVALIDDATA );
+   if( strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      return SCIP_INVALIDDATA;
+   }
 
    /* terminate if coefficient is infinite */
    assert(SCIPisFinite(val));
@@ -18263,7 +18245,11 @@ SCIP_RETCODE SCIPchgCoefLinear(
    assert(cons != NULL);
    assert(var != NULL);
 
-   SCIP_STRINGEQ( SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME, SCIP_INVALIDDATA );
+   if( strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      return SCIP_INVALIDDATA;
+   }
 
    if( SCIPgetStage(scip) > SCIP_STAGE_PROBLEM || !SCIPconsIsOriginal(cons) || !SCIPvarIsOriginal(var) )
    {
@@ -18337,7 +18323,12 @@ SCIP_Real SCIPgetLhsLinear(
    assert(scip != NULL);
    assert(cons != NULL);
 
-   SCIP_STRINGEQ( SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME, SCIP_INVALID );
+   if( strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      SCIPABORT();
+      return SCIP_INVALID;  /*lint !e527*/
+   }
 
    consdata = SCIPconsGetData(cons);
    assert(consdata != NULL);
@@ -18356,7 +18347,12 @@ SCIP_Real SCIPgetRhsLinear(
    assert(scip != NULL);
    assert(cons != NULL);
 
-   SCIP_STRINGEQ( SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME, SCIP_INVALID );
+   if( strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      SCIPABORT();
+      return SCIP_INVALID;  /*lint !e527*/
+   }
 
    consdata = SCIPconsGetData(cons);
    assert(consdata != NULL);
@@ -18374,7 +18370,11 @@ SCIP_RETCODE SCIPchgLhsLinear(
    assert(scip != NULL);
    assert(cons != NULL);
 
-   SCIP_STRINGEQ( SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME, SCIP_INVALIDDATA );
+   if( strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      return SCIP_INVALIDDATA;
+   }
 
    SCIP_CALL( chgLhs(scip, cons, lhs) );
 
@@ -18388,10 +18388,11 @@ SCIP_RETCODE SCIPchgRhsLinear(
    SCIP_Real             rhs                 /**< new right hand side */
    )
 {
-   assert(scip != NULL);
-   assert(cons != NULL);
-
-   SCIP_STRINGEQ( SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME, SCIP_INVALIDDATA );
+   if( strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      return SCIP_INVALIDDATA;
+   }
 
    SCIP_CALL( chgRhs(scip, cons, rhs) );
 
@@ -18409,7 +18410,12 @@ int SCIPgetNVarsLinear(
    assert(scip != NULL);
    assert(cons != NULL);
 
-   SCIP_STRINGEQ( SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME, -1 );
+   if( strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      SCIPABORT();
+      return -1;  /*lint !e527*/
+   }
 
    consdata = SCIPconsGetData(cons);
    assert(consdata != NULL);
@@ -18428,7 +18434,12 @@ SCIP_VAR** SCIPgetVarsLinear(
    assert(scip != NULL);
    assert(cons != NULL);
 
-   SCIP_STRINGEQ( SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME, NULL );
+   if( strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      SCIPABORT();
+      return NULL;  /*lint !e527*/
+   }
 
    consdata = SCIPconsGetData(cons);
    assert(consdata != NULL);
@@ -18447,7 +18458,12 @@ SCIP_Real* SCIPgetValsLinear(
    assert(scip != NULL);
    assert(cons != NULL);
 
-   SCIP_STRINGEQ( SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME, NULL );
+   if( strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      SCIPABORT();
+      return NULL;  /*lint !e527*/
+   }
 
    consdata = SCIPconsGetData(cons);
    assert(consdata != NULL);
@@ -18471,7 +18487,12 @@ SCIP_Real SCIPgetActivityLinear(
    assert(scip != NULL);
    assert(cons != NULL);
 
-   SCIP_STRINGEQ( SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME, SCIP_INVALID );
+   if( strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      SCIPABORT();
+      return SCIP_INVALID;  /*lint !e527*/
+   }
 
    consdata = SCIPconsGetData(cons);
    assert(consdata != NULL);
@@ -18494,7 +18515,12 @@ SCIP_Real SCIPgetFeasibilityLinear(
    assert(scip != NULL);
    assert(cons != NULL);
 
-   SCIP_STRINGEQ( SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME, SCIP_INVALID );
+   if( strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      SCIPABORT();
+      return SCIP_INVALID;  /*lint !e527*/
+   }
 
    consdata = SCIPconsGetData(cons);
    assert(consdata != NULL);
@@ -18517,7 +18543,12 @@ SCIP_Real SCIPgetDualsolLinear(
    assert(cons != NULL);
    assert(!SCIPconsIsOriginal(cons)); /* original constraints would always return 0 */
 
-   SCIP_STRINGEQ( SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME, SCIP_INVALID );
+   if( strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      SCIPABORT();
+      return SCIP_INVALID;  /*lint !e527*/
+   }
 
    consdata = SCIPconsGetData(cons);
    assert(consdata != NULL);
@@ -18540,7 +18571,12 @@ SCIP_Real SCIPgetDualfarkasLinear(
    assert(cons != NULL);
    assert(!SCIPconsIsOriginal(cons)); /* original constraints would always return 0 */
 
-   SCIP_STRINGEQ( SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME, SCIP_INVALID );
+   if( strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      SCIPABORT();
+      return SCIP_INVALID;  /*lint !e527*/
+   }
 
    consdata = SCIPconsGetData(cons);
    assert(consdata != NULL);
@@ -18564,7 +18600,12 @@ SCIP_ROW* SCIPgetRowLinear(
    assert(scip != NULL);
    assert(cons != NULL);
 
-   SCIP_STRINGEQ( SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME, NULL );
+   if( strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      SCIPABORT();
+      return NULL;  /*lint !e527*/
+   }
 
    consdata = SCIPconsGetData(cons);
    assert(consdata != NULL);
@@ -18583,7 +18624,12 @@ SCIP_RETCODE SCIPcreateRowLinear(
    assert(scip != NULL);
    assert(cons != NULL);
 
-   SCIP_STRINGEQ( SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME, SCIP_ERROR );
+   if( strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      SCIPABORT();
+      return SCIP_ERROR; /*lint !e527*/
+   }
 
    consdata = SCIPconsGetData(cons);
    assert(consdata != NULL);
@@ -18649,8 +18695,11 @@ SCIP_RETCODE SCIPupgradeConsLinear(
 
    /* get the constraint handler and check, if it's really a linear constraint */
    conshdlr = SCIPconsGetHdlr(cons);
-
-   SCIP_STRINGEQ( SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME, SCIP_INVALIDDATA );
+   if( strcmp(SCIPconshdlrGetName(conshdlr), CONSHDLR_NAME) != 0 )
+   {
+      SCIPerrorMessage("constraint is not linear\n");
+      return SCIP_INVALIDDATA;
+   }
 
    /* get constraint handler data and constraint data */
    conshdlrdata = SCIPconshdlrGetData(conshdlr);

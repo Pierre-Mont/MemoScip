@@ -26,7 +26,9 @@ struct MemoSCIPRunOptions {
     /** Treat the input instance as KPCG format and use internal reader. */
     bool kpcg = false;
 
-    int nbslack = 0; // Number of slack variables 
+    int nbslack = 1000; // Number of slack variables 
+    /** Maximum time limit in seconds (0 = no limit). */
+    int timelimit = 0;
 };
 
 /** Parse argv. Expects one instance file path (any non-flag argument) and optional flags. */

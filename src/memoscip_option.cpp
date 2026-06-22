@@ -136,6 +136,23 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
             return false;
         return true;
     }
+    if (s[1] == 't' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
+    {
+        const char* rest = s + 2;
+        if (*rest == '\0')
+        {
+            errMsg = "-t requires an integer value (e.g. -t=60 or -t60)";
+            return false;
+        }
+        if (!parse_int_suffix("-t", rest, out.timelimit, errMsg))
+            return false;
+        if (out.timelimit < 0)
+        {
+            errMsg = "-t requires a non-negative integer value (e.g. -t=60)";
+            return false;
+        }
+        return true;
+    }
     
     if (s[1] == 'm' && (s[2] == '\0' || s[2] == '=' || ( (s[2] >= '0' && s[2] <= '9') || s[2] == '.' || s[2] == '+' || s[2] == '-')))
     {
@@ -200,6 +217,7 @@ void print_memoscip_usage(const char* programName)
         << "  -l=N       Learning mode level (0 = off, >= 1 enables learning handlers)\n"
         << "  -o         Extra outputs: intermediate LP dumps, etc.\n"
         << "  -m=F       Minimum increment (float, default 1.0)\n"
+        << "  -t=N       Maximum time in seconds before timeout (0 = no limit)\n"
         << "  -s=N       Number of slack variables\n"
         << "  -p         Profiling / reserved for future use\n"
         << "  -kpcg      Treat input as KPCG instance and use internal reader\n"

@@ -342,6 +342,12 @@ int main(int argc, char** argv)
         std::cerr << "[memobound] profiling flag (-p) set (reserved for future timing / SCIP hooks)\n";
     if (g_options.verbosity > 0 || g_options.output)
         cout << "Start Solving " << endl;
+    if (g_options.timelimit > 0)
+    {
+        SCIP_CALL( SCIPsetRealParam(scip, "limits/time", (SCIP_Real)g_options.timelimit) );
+        if (g_options.verbosity > 0)
+            cout << "Time limit set to " << g_options.timelimit << " seconds" << endl;
+    }
     SCIP_CALL(SCIPsolve(scip));
 
     /*if (g_options.output > 1)

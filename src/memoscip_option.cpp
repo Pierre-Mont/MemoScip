@@ -166,6 +166,32 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
             return false;
         return true;
     }
+
+    if (s[1] == 'b' && s[2] == 'o' && (s[3] == '\0' || s[3] == '=' || (s[3] >= '0' && s[3] <= '9')))
+    {
+        const char* rest = s + 3;
+        if (*rest == '\0')
+        {
+            errMsg = "-bo requires an integer value (e.g. -bo=1 or -bo1)";
+            return false;
+        }
+        if (!parse_int_suffix("-bo", rest, out.branchingOrder, errMsg))
+            return false;
+        return true;
+    }
+    
+    if (s[1] == 'b' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
+    {
+        const char* rest = s + 2;
+        if (*rest == '\0')
+        {
+            errMsg = "-b requires an integer value (e.g. -b=1 or -b1)";
+            return false;
+        }
+        if (!parse_int_suffix("-b", rest, out.branchingHeuristic, errMsg))
+            return false;
+        return true;
+    }
     
 
     
@@ -221,6 +247,8 @@ void print_memoscip_usage(const char* programName)
         << "  -s=N       Number of slack variables\n"
         << "  -p         Profiling / reserved for future use\n"
         << "  -kpcg      Treat input as KPCG instance and use internal reader\n"
+        << "  -b=N       Branching heuristic (integer, default 0)\n"
+        << "  -bo=N      Branching order (integer, default 1)\n"
         << "\n"
         << "Examples:\n"
         << "  " << programName << " problem.lp -v=1\n"

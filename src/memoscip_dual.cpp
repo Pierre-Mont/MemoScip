@@ -358,7 +358,7 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
         SCIP_Real dual = diffdualsol[i];
         //if size of a row is greater than 1
         if(SCIProwGetNNonz(rows[i])>1){
-            if(g_options.verbosity > 1 && dual!=0){
+            if(g_options.verbosity > 2 && dual!=0){
                 if(i<(int)g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol.size())
                     cout << "Row " << SCIProwGetName(rows[i]) <<" "<<g_memoscip.collector.dualsol[i]<<" "<<g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol[i]<<" "<<dual<<endl;
                 else 
@@ -454,7 +454,7 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
                 }
         }
     } 
-    if(g_options.verbosity > 1){
+    if(g_options.verbosity > 2){
         cout<<"DUAL proof"<<endl;
         for(size_t i = 0; i < g_memoscip.CurrentVarIdx.size(); ++i )
         {
@@ -489,7 +489,7 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
         if(g_options.debug){
             if(i<parentredcost.size()){
                 if( g_memoscip.nodeInfoMap[nodeNumber].FirstDualProofInds.empty()){
-                    if(g_options.verbosity > 2){
+                    if(g_options.verbosity > 3){
                         cout<<"COEF IN PROOF "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[i]])<<" "<<coef<<" vs parent red "<<parentredcost[i]<<" new red "<<parentredcost[i]-coef<< " LB "<<g_memoscip.VarLb[i]<<" UB "<<g_memoscip.VarUb[i]<<endl;
                         cout<<parentredcost[i]-coef<<endl;
                     }
@@ -509,16 +509,16 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
     g_memoscip.nodeInfoMap[nodeNumber].DualProofCoef.second=sumdual;
     g_memoscip.nodeInfoMap[nodeNumber].Status="FEASIBLE"; 
     g_memoscip.nodeInfoMap[nodeNumber].lb_increase=sumdual;
-    if(g_options.verbosity > 0){
+    if(g_options.verbosity > 1){
         cout<<g_memoscip.collector.objval<<" "<<g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].lb<<" Truesumdual "<<Truesumdual<<" "<<Truesumdual-g_memoscip.collector.objval<<endl;
     }
     if(g_memoscip.nodeInfoMap[nodeNumber].FirstDualProofInds.empty()){
-        if(g_options.verbosity > 0){
+        if(g_options.verbosity > 1){
             cout<<"DIFF Objval "<<g_memoscip.collector.objval-g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].lb<<" versus sumdiffdual "<<sumdual<<endl;
         }
         assert(fabs(g_memoscip.collector.objval-sumdual-g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].lb) < 1e-2|| g_memoscip.collector.objval>= SCIPgetPrimalbound(scip));
     }else{
-        if(g_options.verbosity > 0){
+        if(g_options.verbosity > 1){
             cout<<"DIFF Objval "<<g_memoscip.collector.objval-g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].lb<<" versus sumdiffdual "<<sumdual+g_memoscip.nodeInfoMap[nodeNumber].FirstDualProofCoef.second<<endl;
         }
         assert(fabs(g_memoscip.collector.objval-sumdual-g_memoscip.nodeInfoMap[nodeNumber].FirstDualProofCoef.second-g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].lb) < 1e-2 || g_memoscip.collector.objval>= SCIPgetPrimalbound(scip));
@@ -584,7 +584,7 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
         for(int i = 0; i < nrows+ncols; ++i)
         {
             if(!SCIPisDualfeasZero(scip,rowFarkas[i])){
-                if(g_options.verbosity > 1){
+                if(g_options.verbosity > 2){
                     if(i<nrows)
                         cout<<"Row "<<i<<" "<<SCIProwGetName(rows[i])<<" "<<rowFarkas[i]<<endl;
                     else
@@ -620,7 +620,7 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
                 }
             }
         }
-        if(g_options.verbosity > 1){
+        if(g_options.verbosity > 2){
             cout<<"INFEASIBLE PROOF "<< rhs<<endl;
             for(size_t i = 0; i < g_memoscip.CurrentVarIdx.size(); ++i)
             {

@@ -67,10 +67,15 @@ int main(int argc, char** argv)
     //Do DFS node selection
     SCIP_CALL( SCIPsetIntParam(scip, "nodeselection/dfs/stdpriority", 1000000) );
     //Pscost branching (disable strong branching)
-    SCIP_CALL( SCIPsetIntParam(scip, "branching/pscost/priority", 2000000) );    // register handlers
+    if(g_options.branchingHeuristic==3){
+        SCIP_CALL( SCIPsetIntParam(scip, "branching/pscost/priority", -2000000) );
+        SCIP_CALL( SCIPsetIntParam(scip, "branching/relpscost/priority", 2000000) );
+        }    // register handlers
+    else
+        SCIP_CALL( SCIPsetIntParam(scip, "branching/pscost/priority", 2000000) );    // register handlers
 
     //FULL VERBOSITY
-     if(g_options.verbosity > 2){
+     if(g_options.verbosity > 3){
         SCIP_CALL( SCIPsetIntParam(scip, "display/verblevel", 2) );
         SCIP_CALL( SCIPsetBoolParam(scip, "display/lpinfo", TRUE) );
     }
@@ -331,7 +336,11 @@ int main(int argc, char** argv)
         v=vars[i];
         objcoefs.push_back(SCIPvarGetObj(v));
         string varname = SCIPvarGetName(v);
-        if (varname.size() >= 2 && varname.substr(varname.size() - 2) != "_0") {
+        if (g_options.branchingHeuristic >= 1 && varname.size() >= 2 && ((varname.substr(varname.size() - 2) == "_0" && g_options.branchingOrder==0) || (varname.substr(varname.size() - 2) != "_0" && g_options.branchingOrder==1)))
+        {
+            SCIP_CALL(SCIPchgVarBranchPriority(scip, v, -1000000));
+        }
+        if (varname.size() >= 2 && ((varname.substr(varname.size() - 2) == "_0" && g_options.branchingOrder==0) || (varname.substr(varname.size() - 2) != "_0" && g_options.branchingOrder==1)) ) {
           g_memoscip.OrderVar.push_back((v));
         }
     }
@@ -340,12 +349,12 @@ int main(int argc, char** argv)
 
     if (g_options.profiling)
         std::cerr << "[memobound] profiling flag (-p) set (reserved for future timing / SCIP hooks)\n";
-    if (g_options.verbosity > 0 || g_options.output)
+    if (g_options.verbosity > 1 || g_options.output)
         cout << "Start Solving " << endl;
     if (g_options.timelimit > 0)
     {
         SCIP_CALL( SCIPsetRealParam(scip, "limits/time", (SCIP_Real)g_options.timelimit) );
-        if (g_options.verbosity > 0)
+        if (g_options.verbosity > 1)
             cout << "Time limit set to " << g_options.timelimit << " seconds" << endl;
     }
     SCIP_CALL(SCIPsolve(scip));
@@ -363,7 +372,7 @@ int main(int argc, char** argv)
     cout<<"Dual bound : "<<SCIPgetDualbound(scip)<<endl;
     cout<<"Number of learned cuts : "<<g_memoscip.nbAddedctr<<endl;
     cout<<"Gap : "<<SCIPgetGap(scip)<<endl;
-    if(g_options.verbosity > 1){
+    if(g_options.verbosity > 2){
         SCIP_SOL* sol = SCIPgetBestSol(scip);
         if (sol != nullptr)
         {

@@ -30,7 +30,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeSolved)
         return SCIP_OKAY;
     SCIP_Longint nodenumber = SCIPnodeGetNumber(node);
     SCIP_Real lpobj;
-    if(g_options.verbosity > 0){
+    if(g_options.verbosity > 1){
         cout<<"-----NODE SOLVED EVENT -------"<<endl;
         SCIP_STATUS status = SCIPgetStatus(scip);
         cout << "Node " << nodenumber<<" status "<<status<<" "<<g_memoscip.nodeInfoMap[nodenumber].Status<<endl;
@@ -65,7 +65,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeSolved)
                 AnalyseDualSol(scip,nodenumber );
         }
         //cout<<"lb "<<SCIPgetLPObjval(scip)<<" ceil "<<ceil(SCIPgetLPObjval(scip))<<" ub"<<SCIPgetPrimalbound(scip)<<" "<<ceil(SCIPgetLPObjval(scip))-SCIPgetPrimalbound(scip)<<endl;
-        if(g_options.verbosity > 0)
+        if(g_options.verbosity > 1)
             cout<<"END OF NODE SOLVED EVENT  lpobj "<<lpobj<<" ub "<<SCIPgetPrimalbound(scip)<<endl;
         assert(ceil(lpobj)-SCIPgetPrimalbound(scip)>=-1e-9);
     }
@@ -80,6 +80,8 @@ SCIP_DECL_EVENTEXEC(eventExecNodeSolved)
     assert(SCIPgetNodeLowerbound(scip, node)-g_memoscip.nodeInfoMap[nodenumber].lb <= g_options.minInc || ceil(g_memoscip.nodeInfoMap[nodenumber].lb)- SCIPgetPrimalbound(scip)>= -1e-9 || g_memoscip.nodeInfoMap[nodenumber].Status=="INFEASIBLE" || lpsolstat==SCIP_LPSOLSTAT_OBJLIMIT);
     if(g_memoscip.nodeInfoMap[nodenumber].lb>=SCIPgetPrimalbound(scip))
         g_memoscip.nodeInfoMap[nodenumber].LbgUb=true;
+
+    
     return SCIP_OKAY;
 }
 
@@ -131,7 +133,7 @@ SCIP_DECL_EVENTEXEC(eventExecLPSolved)
         return SCIP_OKAY;
     }
     SCIP_Longint nodeNumber= SCIPnodeGetNumber(node);
-    if(g_options.verbosity > 0)
+    if(g_options.verbosity > 1)
         cout<<"-----LP SOLVED EVENT ------- "<<nodeNumber<< " depth "<<SCIPgetDepth(scip)<<" parent "<<g_memoscip.nodeInfoMap[nodeNumber].parent<<endl;
     SCIP_LPSOLSTAT lpsolstat = SCIPgetLPSolstat(scip);
     if(g_memoscip.CurrentVarIdx.empty()){
@@ -191,7 +193,7 @@ SCIP_DECL_EVENTEXEC(eventExecLPSolved)
     }
 
 
-    if(g_options.verbosity > 0){
+    if(g_options.verbosity > 1){
         cout << "LP Solved - Status: ";
         switch(lpsolstat) {
             case SCIP_LPSOLSTAT_OPTIMAL:
@@ -294,7 +296,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeFocused)
     {
         parent = SCIPnodeGetParent(node);
         parentNumber = SCIPnodeGetNumber(parent);
-        if(g_options.verbosity > 0)
+        if(g_options.verbosity > 1)
             cout<<"-----------FOCUSING NODE "<<nodeNumber<<" depth "<<SCIPgetDepth(scip)<<" with Parent "<<parentNumber<<"---------------------and "<<g_memoscip.nbAddedctr<<" CONSTRAINT added "<<endl<<"UB :"<< SCIPgetPrimalbound(scip)<<endl<<" LB : "<<SCIPnodeGetLowerbound(node)<<endl;
         g_memoscip.nodeInfoMap[nodeNumber].parent=parentNumber;
     }else{
@@ -368,7 +370,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeFocused)
         // add child pointer to parent's children list if not already present
         g_memoscip.nodeInfoMap[parentNumber].children.push_back(SCIPnodeGetNumber(node));
     }
-    if(g_options.verbosity > 0)
+    if(g_options.verbosity > 1)
         cout<<"-------------------------------------ENDOFCUS EVENT ----------------"<<endl;
     
     return SCIP_OKAY;
@@ -392,7 +394,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
     if( node == nullptr )
         return SCIP_OKAY;
     if(nodenumber==1) return SCIP_OKAY; // skip root
-    if(g_options.verbosity > 0){
+    if(g_options.verbosity > 1){
         cout<<"Deleting node "<<nodenumber<<" from nodeInfoMap "<< SCIPgetNodeLowerbound(scip,node)  <<" "<<g_memoscip.nodeInfoMap[nodenumber].lb<< " "<<SCIPnodeGetNumber(node)<<" "<<SCIPgetDepth(scip)<<endl;
         cout<<"number of children "<<g_memoscip.nodeInfoMap[nodenumber].children.size()<<endl;
         cout<<"Bracnh var "<<g_memoscip.nodeInfoMap[nodenumber].BranchVar<<" "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[g_memoscip.nodeInfoMap[nodenumber].BranchVar]])<<endl;
@@ -410,13 +412,13 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
             if(children.size()==1){
                 
                 assert(g_memoscip.nodeInfoMap.contains(children[0]));
-                if(g_options.verbosity > 1)
+                if(g_options.verbosity > 2)
                     cout<<"Single child "<<children[0]<<" lb "<<g_memoscip.nodeInfoMap[children[0]].lb<<" versus parent lb "<<g_memoscip.nodeInfoMap[nodenumber].lb<<" "<<g_memoscip.nodeInfoMap[children[0]].DualProofCoef.first.size()<<" "<<g_memoscip.nodeInfoMap[children[0]].DualProofCoef.second<<" incr lb "<<g_memoscip.nodeInfoMap[children[0]].lb_increase<<endl;
                 assert(g_memoscip.nodeInfoMap[children[0]].lb<g_memoscip.TOP);
                 assert(fabs(g_memoscip.nodeInfoMap[children[0]].DualProofCoef.second-g_memoscip.nodeInfoMap[children[0]].lb_increase)<1e-5);
             }
             if(children.size()==2){
-                if(g_options.verbosity > 1){
+                if(g_options.verbosity > 2){
                     cout<<"Two children "<<children[0]<<" lb "<<g_memoscip.nodeInfoMap[children[0]].lb<<" versus parent lb "<<g_memoscip.nodeInfoMap[nodenumber].lb<<" "<<g_memoscip.nodeInfoMap[children[0]].DualProofCoef.first.size()<<" "<<g_memoscip.nodeInfoMap[children[0]].DualProofCoef.second<<" incr lb "<<g_memoscip.nodeInfoMap[children[0]].lb_increase<<endl;
                     cout<<"Two children "<<children[1]<<" lb "<<g_memoscip.nodeInfoMap[children[1]].lb<<" versus parent lb "<<g_memoscip.nodeInfoMap[nodenumber].lb<<" "<<g_memoscip.nodeInfoMap[children[1]].DualProofCoef.first.size()<<" "<<g_memoscip.nodeInfoMap[children[1]].DualProofCoef.second<<" incr lb "<<g_memoscip.nodeInfoMap[children[1]].lb_increase<<endl;
                 }
@@ -424,7 +426,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
                     assert(g_memoscip.nodeInfoMap.contains(children[0]) && g_memoscip.nodeInfoMap.contains(children[1]));
                     
                     //cout<<children[0]<<" lb "<<g_memoscip.nodeInfoMap[children[0]].lb<<"  "<<children[1]<<" lb "<<g_memoscip.nodeInfoMap[children[1]].lb<<" versus parent lb "<<g_memoscip.nodeInfoMap[nodenumber].lb<<endl;
-                    if(g_options.verbosity > 0){
+                    if(g_options.verbosity > 1){
                         cout<<"Fusing proofs of children "<<children[0]<<" and "<<children[1]<<" to recover parent node "<<nodenumber<<" proof "<<endl;
                         cout<<"proofs of children "<<children[0]<<" "<<g_memoscip.nodeInfoMap[children[0]].DualProofCoef.second<<" lb increase: "<<g_memoscip.nodeInfoMap[children[0]].lb_increase<<endl;
                         cout<<"proofs of children "<<children[1]<<" "<<g_memoscip.nodeInfoMap[children[1]].DualProofCoef.second<<" lb increase: "<<g_memoscip.nodeInfoMap[children[1]].lb_increase<<endl;
@@ -455,7 +457,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
             //cout<<g_memoscip.nodeInfoMap[nodenumber].redcosts.size()<<"' "<<ResFus.size()<<endl;
 
             //PRINT RESFUS
-            if(g_options.verbosity > 1){
+            if(g_options.verbosity > 2){
                 cout<<"ResFus "<<endl;
                 for (size_t i = 0; i < ResFus.size(); i++)
                 {
@@ -470,6 +472,54 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
                 cout<<" >= "<<rhsFus<<endl;
             }
             SCIP_Real rhs_summed=rhsFus;
+            vector<int> NewInds;
+            vector<SCIP_Real> NewCoefs;
+            vector<SCIP_VAR*> NewVar;
+
+            if(rhs_summed>0 && g_options.learning==2){
+                 char name[100];
+
+                snprintf(name, 100, "cut_%lld_%d", nodenumber,SCIPgetDepth(scip));
+                
+
+                for (size_t i = 0; i < ResFus.size(); i++)
+                {
+                    if(!SCIPisDualfeasZero(scip,ResFus[i])){
+                        NewInds.push_back(i);
+                        NewCoefs.push_back(ResFus[i]);
+                        NewVar.push_back(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[i]]);
+                        //assert(ResFus[i]<g_memoscip.TOP);
+                    }
+                }
+
+                SCIP_VAR* slack=g_memoscip.AllVars[g_memoscip.slackVar[g_memoscip.nbAddedctr]];     
+                NewVar.push_back(slack);
+                NewInds.push_back(g_memoscip.CurrentVarIdx.size());
+                NewCoefs.push_back(-1.0);
+
+                assert(NewVar.size()==NewCoefs.size());
+                assert(NewVar.size()!=0);
+                SCIP_CALL( SCIPqueueCut(scip, name,
+                                (int)NewVar.size(),
+                                NewVar.data(),
+                                NewCoefs.data(),
+                                rhs_summed,  // lhs (pour inégalité)
+                                rhs_summed,&g_memoscip.CutQueue) ); 
+
+
+                g_memoscip.AuxVar.push_back(g_memoscip.CurrentVarIdx.size());
+                g_memoscip.eqvid[SCIPvarGetIndex(slack)]=g_memoscip.CurrentVarIdx.size();
+                g_memoscip.CurrentVarIdx.push_back(g_memoscip.slackVar[g_memoscip.nbAddedctr]);
+                g_memoscip.VarUb.push_back(SCIPinfinity(scip));
+                g_memoscip.VarLb.push_back(0);
+
+                g_memoscip.nbAddedctr++;
+
+
+                if(g_options.verbosity > 2)
+                    cout<<"Adding cut "<<name<<" with rhs "<<rhs_summed<<" and "<<NewVar.size()<<" variables"<<endl;
+            }
+
             assert(fabs(g_memoscip.nodeInfoMap[nodenumber].DualProofCoef.second-g_memoscip.nodeInfoMap[nodenumber].lb_increase)<1e-5);
             
             if(g_memoscip.nodeInfoMap[nodenumber].lb_increase>0){
@@ -486,17 +536,17 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
                 rhs_summed+=g_memoscip.nodeInfoMap[nodenumber].DualProofCoef.second;
             }
             
-            if(g_options.verbosity > 3)
+            if(g_options.verbosity > 4)
                 cout<<"BOund propagation "<<g_memoscip.nodeInfoMap[nodenumber].AfterNCBPRemoval.size()<<endl;
 
             for(int i = (int)g_memoscip.nodeInfoMap[nodenumber].AfterNCBPRemoval.size()-1; i >= 0; i--) {
-                if(g_options.verbosity > 3)
+                if(g_options.verbosity > 4)
                     cout<<"removed "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.nodeInfoMap[nodenumber].AfterNCBPRemoval[i].first])<<" "<<g_memoscip.nodeInfoMap[nodenumber].AfterNCBPRemoval[i].second.size()<<endl;
                 int idxi = g_memoscip.nodeInfoMap[nodenumber].AfterNCBPRemoval[i].first;
                 if(ResFus[idxi]>1e-5){
                     assert(ResFus[idxi]>1e-5);
                     for(size_t j = 0; j < g_memoscip.nodeInfoMap[nodenumber].AfterNCBPRemoval[i].second.size(); j++) {
-                        if(g_options.verbosity > 3)
+                        if(g_options.verbosity > 4)
                             cout<<"explanation "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.nodeInfoMap[nodenumber].AfterNCBPRemoval[i].second[j]])<<endl;
                         int idxj =g_memoscip.nodeInfoMap[nodenumber].AfterNCBPRemoval[i].second[j];
                         //Temporary fix because negative coef are hard to handle.
@@ -506,14 +556,14 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
                 }
                 ResFus[idxi]=0;
             }
-            if(g_options.verbosity > 3)
+            if(g_options.verbosity > 4)
                 cout<<"Node consistency "<<g_memoscip.nodeInfoMap[nodenumber].NodeConsistency.size()<<" "<<nodenumber<<endl;
             for (size_t i = 0; i < g_memoscip.nodeInfoMap[nodenumber].NodeConsistency.size(); i++)
             {
                 int idx =g_memoscip.nodeInfoMap[nodenumber].NodeConsistency[i].first;
                 ResFus[idx]=g_memoscip.nodeInfoMap[nodenumber].NodeConsistency[i].second;
                 rhs_summed=min(g_memoscip.nodeInfoMap[nodenumber].NodeConsistency[i].second,rhs_summed);
-                if(g_options.verbosity > 3)
+                if(g_options.verbosity > 4)
                     cout<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[idx]])<< " "<< idx<<" "<<g_memoscip.nodeInfoMap[nodenumber].NodeConsistency[i].second<<" "<<ceil(g_memoscip.nodeInfoMap[nodenumber].NodeConsistency[i].second+g_memoscip.nodeInfoMap[nodenumber].lb)<<" "<<SCIPgetPrimalbound(scip)<<endl;
                 assert(ceil(g_memoscip.nodeInfoMap[nodenumber].NodeConsistency[i].second+g_memoscip.nodeInfoMap[nodenumber].lb)>=SCIPgetPrimalbound(scip));
             }
@@ -530,17 +580,17 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
             }
 
 
-            if(g_options.verbosity > 3)
+            if(g_options.verbosity > 4)
                 cout<<"BOund propagation "<<g_memoscip.nodeInfoMap[nodenumber].InitialBPRemoval.size()<<endl;
 
             for(int i = (int)g_memoscip.nodeInfoMap[nodenumber].InitialBPRemoval.size()-1; i >= 0; i--) {
-                if(g_options.verbosity > 3)
+                if(g_options.verbosity > 4)
                     cout<<"removed "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.nodeInfoMap[nodenumber].InitialBPRemoval[i].first])<<" "<<g_memoscip.nodeInfoMap[nodenumber].InitialBPRemoval[i].second.size()<<endl;
                 int idxi = g_memoscip.nodeInfoMap[nodenumber].InitialBPRemoval[i].first;
                 if(ResFus[idxi]>1e-5){
                     assert(ResFus[idxi]>1e-5);
                     for(size_t j = 0; j < g_memoscip.nodeInfoMap[nodenumber].InitialBPRemoval[i].second.size(); j++) {
-                        if(g_options.verbosity > 3)
+                        if(g_options.verbosity > 4)
                             cout<<"explanation "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.nodeInfoMap[nodenumber].InitialBPRemoval[i].second[j]])<<endl;
                         int idxj =g_memoscip.nodeInfoMap[nodenumber].InitialBPRemoval[i].second[j];
                         //Temporary fix because negative coef are hard to handle.
@@ -550,10 +600,8 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
                 ResFus[idxi]=0;
             }
 
-            vector<int> NewInds;
-            vector<SCIP_Real> NewCoefs;
-            vector<SCIP_VAR*> NewVar;
-            if(g_options.verbosity > 1){
+            
+            if(g_options.verbosity > 2){
                 cout<<"final res "<<endl;
                 for (size_t i = 0; i < ResFus.size(); i++)
                 {
@@ -567,27 +615,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
                 }
                 cout<<" >= "<<rhs_summed<<endl;
             }
-            //cout<<"New cut with "<<ResFus.size()<<" variables "<< g_memoscip.nodeInfoMap[nodenumber].DualProofCoef.first.size()<<endl;
-            for (size_t i = 0; i < ResFus.size(); i++)
-            {
-                if(!SCIPisDualfeasZero(scip,ResFus[i])){
-                    NewInds.push_back(i);
-                    NewCoefs.push_back(ResFus[i]);
-                    NewVar.push_back(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[i]]);
-                    //assert(ResFus[i]<g_memoscip.TOP);
-                }
-            }
 
-            SCIP_VAR* slack=g_memoscip.AllVars[g_memoscip.slackVar[g_memoscip.nbAddedctr]];     
-            NewVar.push_back(slack);
-            NewInds.push_back(g_memoscip.CurrentVarIdx.size());
-            NewCoefs.push_back(-1.0);
-            g_memoscip.AuxVar.push_back(g_memoscip.CurrentVarIdx.size());
-            g_memoscip.eqvid[SCIPvarGetIndex(slack)]=g_memoscip.CurrentVarIdx.size();
-            g_memoscip.CurrentVarIdx.push_back(g_memoscip.slackVar[g_memoscip.nbAddedctr]);
-            g_memoscip.VarUb.push_back(SCIPinfinity(scip));
-            g_memoscip.VarLb.push_back(0);
-            
             if(g_options.debug){
                 if(children.size()==2){
                     //cout<<"Adding cut with rhs "<<rhs_summed<<" vs "<<(min(g_memoscip.nodeInfoMap[children[1]].lb_increase,g_memoscip.nodeInfoMap[children[0]].lb_increase) + g_memoscip.nodeInfoMap[nodenumber].lb_increase )<<endl;
@@ -600,18 +628,53 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
 
                 }
             }
-            if(g_options.verbosity > 1){
-                cout<<"RESFUS of node "<<nodenumber<<endl;
-                for (size_t i = 0; i < NewVar.size(); i++)
+        
+            
+
+            //cout<<"rhs summed "<<rhs_summed<<" "<<g_memoscip.nodeInfoMap[parentNumber].lb<<endl;
+            //cout<<ceil(rhs_summed+g_memoscip.nodeInfoMap[parentNumber].lb)<<" "<<SCIPgetPrimalbound(scip)<<endl;
+            //assert(SCIPgetPrimalbound(scip) == SCIPinfinity(scip)  || ceil(rhs_summed+g_memoscip.nodeInfoMap[parentNumber].lb) - SCIPgetPrimalbound(scip) > -1e-9);
+
+            if(rhs_summed>0 && g_options.learning==1){
+                 char name[100];
+
+                snprintf(name, 100, "cut_%lld_%d", nodenumber,SCIPgetDepth(scip));
+                
+
+                for (size_t i = 0; i < ResFus.size(); i++)
                 {
-                    int coef = NewCoefs[i];
-                    if(coef > 0)
-                        cout<<"+"<<coef<<" "<<SCIPvarGetName(NewVar[i])<<" ";
-                    else if(coef < 0)
-                        cout<<coef<<" "<<SCIPvarGetName(NewVar[i])<<" ";
+                    if(!SCIPisDualfeasZero(scip,ResFus[i])){
+                        NewInds.push_back(i);
+                        NewCoefs.push_back(ResFus[i]);
+                        NewVar.push_back(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[i]]);
+                        //assert(ResFus[i]<g_memoscip.TOP);
+                    }
                 }
-                cout<<" >= "<<rhs_summed<<endl;
+
+                SCIP_VAR* slack=g_memoscip.AllVars[g_memoscip.slackVar[g_memoscip.nbAddedctr]];     
+                NewVar.push_back(slack);
+                NewInds.push_back(g_memoscip.CurrentVarIdx.size());
+                NewCoefs.push_back(-1.0);
+                g_memoscip.AuxVar.push_back(g_memoscip.CurrentVarIdx.size());
+                g_memoscip.eqvid[SCIPvarGetIndex(slack)]=g_memoscip.CurrentVarIdx.size();
+                g_memoscip.CurrentVarIdx.push_back(g_memoscip.slackVar[g_memoscip.nbAddedctr]);
+                g_memoscip.VarUb.push_back(SCIPinfinity(scip));
+                g_memoscip.VarLb.push_back(0);
+                if(g_options.verbosity > 2)
+                    cout<<"Adding cut "<<name<<" with rhs "<<rhs_summed<<" and "<<NewVar.size()<<" variables"<<endl;
+
+                assert(NewVar.size()==NewCoefs.size());
+                assert(NewVar.size()!=0);
+                SCIP_CALL( SCIPqueueCut(scip, name,
+                                (int)NewVar.size(),
+                                NewVar.data(),
+                                NewCoefs.data(),
+                                rhs_summed,  // lhs (pour inégalité)
+                                rhs_summed,&g_memoscip.CutQueue) ); 
+               
+                g_memoscip.nbAddedctr++;
             }
+            
             //cout<<"Dual proof coef second "<<g_memoscip.nodeInfoMap[nodenumber].DualProofCoef.second<<" lb increase "<<g_memoscip.nodeInfoMap[nodenumber].lb_increase<<endl;
             assert(abs(g_memoscip.nodeInfoMap[nodenumber].DualProofCoef.second-g_memoscip.nodeInfoMap[nodenumber].lb_increase) < 1e-9);
             assert(NewCoefs.size()<=g_memoscip.CurrentVarIdx.size());
@@ -621,33 +684,6 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
             g_memoscip.nodeInfoMap[nodenumber].DualProofVars=NewVar;
             assert(g_memoscip.nodeInfoMap[nodenumber].lb_increase<=rhs_summed);
             g_memoscip.nodeInfoMap[nodenumber].lb_increase=rhs_summed;
-
-            //cout<<"rhs summed "<<rhs_summed<<" "<<g_memoscip.nodeInfoMap[parentNumber].lb<<endl;
-            //cout<<ceil(rhs_summed+g_memoscip.nodeInfoMap[parentNumber].lb)<<" "<<SCIPgetPrimalbound(scip)<<endl;
-            //assert(SCIPgetPrimalbound(scip) == SCIPinfinity(scip)  || ceil(rhs_summed+g_memoscip.nodeInfoMap[parentNumber].lb) - SCIPgetPrimalbound(scip) > -1e-9);
-        
-
-            char name[100];
-
-            snprintf(name, 100, "cut_%lld_%d", nodenumber,SCIPgetDepth(scip));
-            if(g_options.verbosity>1)
-                cout<<"Adding cut "<<name<<" with rhs "<<rhs_summed<<" and "<<NewVar.size()<<" variables"<<endl;
-            
-
-            if(rhs_summed>0){
-                assert(NewVar.size()==NewCoefs.size());
-                assert(NewVar.size()!=0);
-                SCIP_CALL( SCIPqueueCut(scip, name,
-                                (int)NewVar.size(),
-                                NewVar.data(),
-                                NewCoefs.data(),
-                                rhs_summed,  // lhs (pour inégalité)
-                                rhs_summed,&g_memoscip.CutQueue) ); 
-
-                g_memoscip.nbAddedctr++;
-            }
-            
-
             
             g_memoscip.nodeInfoMap.erase(children[0]);
             if(children.size()==2)  
@@ -751,7 +787,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
             }
 
             //Print dual proof
-            if(g_options.verbosity > 1){
+            if(g_options.verbosity > 2){
                 cout<<"Dual proof after no child "<<g_memoscip.nodeInfoMap[nodenumber].DualProofInds.size()<<endl;
                 for(size_t i = 0; i < g_memoscip.nodeInfoMap[nodenumber].DualProofInds.size(); i++)
                 {
@@ -882,14 +918,14 @@ static SCIP_DECL_EVENTEXEC(eventExecBoundChanged)
     }
     SCIP_Longint nodenumber=SCIPnodeGetNumber(node);
         
-    if(g_options.verbosity > 0)
+    if(g_options.verbosity > 1)
         cout<<"-----BOUND CHANGED EVENT ------- "<< nodenumber<<" "<<" "<<SCIPvarGetName(var)<<" "<<SCIPgetDepth(scip)<<endl;
 
     SCIP_Real oldbound = SCIPeventGetOldbound(event);
     newbound = SCIPeventGetNewbound(event);
     
     if (eventtype & SCIP_EVENTTYPE_LBCHANGED) {
-        if(g_options.verbosity > 0){
+        if(g_options.verbosity > 1){
             cout<<"LB CHANGED "<<SCIPvarGetName(var)<<" "<<oldbound<<" ->"<<newbound<<endl;
         }
         assert(SCIPvarGetName(var)[2]!='s');
@@ -907,7 +943,7 @@ static SCIP_DECL_EVENTEXEC(eventExecBoundChanged)
         //if reason is COnstraint :
         if(reason!=NULL){
             SCIP_BOUNDCHGTYPE chgtype = SCIPbdchginfoGetChgtype(reason);
-            if(g_options.verbosity > 1)
+            if(g_options.verbosity > 2)
                 cout<<"reason found LB Change "<<SCIPvarGetName(var)<<" "<<oldbound<<" "<<newbound<<endl;
             switch (chgtype) {
                 case SCIP_BOUNDCHGTYPE_CONSINFER: {
@@ -915,7 +951,7 @@ static SCIP_DECL_EVENTEXEC(eventExecBoundChanged)
                     if (cons != NULL) {
                         std::string constype = SCIPconshdlrGetName(SCIPconsGetHdlr(cons));
                         std::string consname = SCIPconsGetName(cons);
-                        if(g_options.verbosity > 1)
+                        if(g_options.verbosity > 2)
                             cout<< "CONSTRAINT (" + constype + ": " + consname + ")"<<endl;
                         //Loop over variables in constraint and coef
                         SCIP_VAR** vars = SCIPgetVarsLinear(scip,cons);
@@ -969,12 +1005,12 @@ static SCIP_DECL_EVENTEXEC(eventExecBoundChanged)
         }else{
             //cout<<"no reason found"<<endl;
         }
-        if(g_options.verbosity > 0)
+        if(g_options.verbosity > 1)
             cout << "[" << reason << "] "<< SCIPvarGetName(var) << " LB: "<< oldbound << " → " << newbound << endl;
     }
     
     if (eventtype & SCIP_EVENTTYPE_UBCHANGED) {
-        if(g_options.verbosity > 0)
+        if(g_options.verbosity > 1)
             cout<<"UB CHANGED "<<SCIPvarGetName(var)<<" "<<oldbound<<" ->"<<newbound<<endl;
 
         reason = getBoundChangeReasonDetailed(scip, var, SCIP_BOUNDTYPE_UPPER, oldbound, newbound);
@@ -992,7 +1028,7 @@ static SCIP_DECL_EVENTEXEC(eventExecBoundChanged)
                         if (cons != NULL) {
                             std::string constype = SCIPconshdlrGetName(SCIPconsGetHdlr(cons));
                             std::string consname = SCIPconsGetName(cons);
-                            if(g_options.verbosity > 1)
+                            if(g_options.verbosity > 2)
                                 cout<< "CONSTRAINT (" + constype + ": " + consname + ")"<<endl;
                             //Loop over variables in constraint and coef
                             SCIP_VAR** vars = SCIPgetVarsLinear(scip,cons);
@@ -1051,7 +1087,7 @@ static SCIP_DECL_EVENTEXEC(eventExecBoundChanged)
                     break;
             }
         }
-        if(g_options.verbosity > 0 )
+        if(g_options.verbosity > 1 )
             cout << "[" << reason << "] "<< SCIPvarGetName(var) << " UB: "<< oldbound << " → " << newbound << endl;
         if(SCIPvarGetName(var)[2]=='s'){
             //cout<<"SLack var"<<endl;
@@ -1128,13 +1164,13 @@ static
 SCIP_DECL_BRANCHEXECLP(branchExecLP)
 {
    // If you tightened domains, let SCIP re-solve LP first
-    if(g_options.verbosity > 0)
+    if(g_options.verbosity > 1)
         cout<<"branching on fractional variables"<<endl;
+    SCIP_NODE* node = SCIPgetCurrentNode(scip);
+    SCIP_Longint nodeNumber=SCIPnodeGetNumber(node);
+    if(g_options.verbosity >=1)
+        cout<<"Node "<<nodeNumber<<" ub "<<SCIPgetPrimalbound(scip)<<" lb "<<SCIPgetNodeLowerbound(scip, node)<<" GAP "<<SCIPgetGap(scip)<<endl;
     if(g_options.learning > 0){
-        SCIP_NODE* node = SCIPgetCurrentNode(scip);
-        SCIP_Longint nodeNumber=SCIPnodeGetNumber(node);
-        if(g_options.verbosity > 0)
-            cout<<"nodeNumber "<<nodeNumber<<endl;
         assert(!g_memoscip.nodeInfoMap[nodeNumber].redcosts.empty());
         assert(!g_memoscip.VarUb.empty());
         // TEMPORARY DISABLE MULTI NODE CONSISTENCY CHECKS
@@ -1170,31 +1206,35 @@ SCIP_DECL_BRANCHEXECLP(branchExecLP)
 
     if( *result == SCIP_REDUCEDDOM )
         return SCIP_OKAY;
+
+    if(g_options.branchingHeuristic < 1){
     // Branch on the first fractional variable (in g_memoscip.CurrentVarIdx order)
-    for( size_t i = 0; i < g_memoscip.OrderVar.size(); ++i )
-    {
-        SCIP_VAR* v = g_memoscip.OrderVar[i];
-        // Only branch on discrete vars
-        if( SCIPvarGetType(v) == SCIP_VARTYPE_CONTINUOUS )
-            continue;
-
-        SCIP_Real x = SCIPgetSolVal(scip, nullptr, v);  // current LP solution value
-        if( !SCIPisFeasIntegral(scip, x) )
+        for( size_t i = 0; i < g_memoscip.OrderVar.size(); ++i )
         {
-            SCIP_NODE* downchild = nullptr;
-            SCIP_NODE* eqchild   = nullptr;
-            SCIP_NODE* upchild   = nullptr;
+            SCIP_VAR* v = g_memoscip.OrderVar[i];
+            // Only branch on discrete vars
+            if( SCIPvarGetType(v) == SCIP_VARTYPE_CONTINUOUS )
+                continue;
 
-            SCIP_CALL( SCIPbranchVarVal(scip, v, 1, &downchild, &eqchild, &upchild) );
-            *result = SCIP_BRANCHED;
+            SCIP_Real x = SCIPgetSolVal(scip, nullptr, v);  // current LP solution value
+            if( !SCIPisFeasIntegral(scip, x) )
+            {
+                SCIP_NODE* downchild = nullptr;
+                SCIP_NODE* eqchild   = nullptr;
+                SCIP_NODE* upchild   = nullptr;
 
-            // optional debug
-            if(g_options.verbosity > 0)
-                cout << "Branching on first fractional var " << SCIPvarGetName(v) << " x=" << x << " probindex=" << SCIPvarGetProbindex(v) << endl;
-            return SCIP_OKAY;
+                SCIP_CALL( SCIPbranchVarVal(scip, v, 1, &downchild, &eqchild, &upchild) );
+                *result = SCIP_BRANCHED;
+
+                // optional debug
+                if(g_options.verbosity > 1)
+                    cout << "Branching on first fractional var " << SCIPvarGetName(v) << " x=" << x << " probindex=" << SCIPvarGetProbindex(v) << endl;
+                return SCIP_OKAY;
+            }
         }
     }
 
+    
     // Nothing fractional found -> nothing to do
     *result = SCIP_DIDNOTFIND;
     return SCIP_OKAY;

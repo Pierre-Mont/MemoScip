@@ -56,18 +56,18 @@ def run_instance(exe: Path, inst: Path, forward_args, timeout: int):
 
 def main():
     parser = argparse.ArgumentParser(description="Run memoscipl over a set of instances and gather results.")
-    parser.add_argument("--exec", default="/home/kisouke/MemoSCIP/build/memoscipl", help="Path to memoscipl executable")
+    parser.add_argument("--exec", default="build/memoscipl", help="Path to memoscipl executable")
     parser.add_argument("--inst-dir", default="Instance/knapsack", help="Directory with instances")
     parser.add_argument("--exts", default=".lp", help="Comma-separated list of extensions to include (e.g. .lp,.wcsp)")
     parser.add_argument("--out-dir", default=".", help="Where to write the CSV")
-    parser.add_argument("--timeout", type=int, default=600, help="Per-run timeout in seconds")
+    parser.add_argument("--timeout", type=int, default=3600, help="Per-run timeout in seconds")
     parser.add_argument("--parallel", action="store_true", help="Run in parallel (not implemented in this script) - reserved")
 
     # parse_known_args: forward unknown args to the executable (e.g. -l1 -v=2)
     args, unknown = parser.parse_known_args()
 
     # Prefer absolute paths under the repository root
-    repo_root = Path("/home/kisouke/MemoSCIP")
+    repo_root = Path(__file__).parent.parent.resolve()
 
     exe = Path(args.exec)
     if not exe.is_absolute():

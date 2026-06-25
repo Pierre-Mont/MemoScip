@@ -12,9 +12,7 @@
 #include <vector>
 
 struct SolCollector {
-    std::vector<SCIP_Real> primsol;
     std::vector<SCIP_Real> dualsol;
-    std::vector<SCIP_Real> activity;
     std::vector<SCIP_Real> redcost;
     SCIP_Real objval = 0.0;
 
@@ -37,11 +35,9 @@ struct NodeInfo {
     
     std::pair<std::vector<SCIP_Real>, SCIP_Real> DualProofCoef;
     std::vector<int> DualProofInds;
-    std::vector<SCIP_VAR*> DualProofVars;
 
     std::pair<std::vector<SCIP_Real>, SCIP_Real> FirstDualProofCoef;
     std::vector<int> FirstDualProofInds;
-    std::vector<SCIP_VAR*> FirstDualProofVars;
 
     SCIP_Longint parent = 0;
     std::vector<SCIP_Real> DualSol;

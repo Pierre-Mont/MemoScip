@@ -22,6 +22,8 @@ using namespace std;
 
 int main(int argc, char** argv)
 {
+    setenv("OPENBLAS_NUM_THREADS", "1", 1);
+
     std::string parseErr;
     if (!parse_memoscip_cli(argc, argv, g_options, parseErr))
     {
@@ -90,6 +92,10 @@ int main(int argc, char** argv)
 
     SCIP_CALL( SCIPsetIntParam(scip, "lp/disablecutoff", 1) );
 
+    //Multi threading disabled
+    SCIP_CALL( SCIPsetIntParam(scip, "lp/threads", 0) );
+    SCIP_CALL( SCIPsetIntParam(scip, "parallel/maxnthreads", 1) );
+    SCIP_CALL( SCIPsetIntParam(scip,"parallel/maxnthreads",1));
     if(g_options.BC){
         cout<<"Bound propagation enabled"<<endl;
         //Enable basic propagation
@@ -124,12 +130,13 @@ int main(int argc, char** argv)
     SCIP_CALL(SCIPsetIntParam(scip, "propagating/probing/maxprerounds", 0));
     SCIP_CALL(SCIPsetIntParam(scip, "propagating/pseudoobj/freq", -1));
     SCIP_CALL(SCIPsetIntParam(scip, "propagating/pseudoobj/maxprerounds", 0));
-    //if(g_options.learning > 0){
+    SCIP_CALL(SCIPsetIntParam(scip, "propagating/rootredcost/freq", -1));
+    SCIP_CALL(SCIPsetIntParam(scip, "propagating/rootredcost/maxprerounds", 0));
+
+    if(!g_options.NC){
         SCIP_CALL(SCIPsetIntParam(scip, "propagating/redcost/freq", -1));
         SCIP_CALL(SCIPsetIntParam(scip, "propagating/redcost/maxprerounds", 0));
-        SCIP_CALL(SCIPsetIntParam(scip, "propagating/rootredcost/freq", -1));
-        SCIP_CALL(SCIPsetIntParam(scip, "propagating/rootredcost/maxprerounds", 0));
-    //}
+    }
     //SCIP_CALL(SCIPsetIntParam(scip, "propagating/symmetry/freq", -1));
     //SCIP_CALL(SCIPsetIntParam(scip, "propagating/symmetry/maxprerounds", 0));
     SCIP_CALL(SCIPsetIntParam(scip, "propagating/vbounds/freq", -1));
@@ -239,8 +246,9 @@ int main(int argc, char** argv)
         snprintf(slackname, 50, "sc_%d", i);
         SCIP_CALL( SCIPcreateVarBasic(scip, &slack, slackname, 0.0, SCIPinfinity(scip), 0.0, SCIP_VARTYPE_CONTINUOUS) );
         SCIP_CALL(SCIPvarSetRemovable(slack,FALSE));
+        SCIP_CALL(SCIPvarSetInitial(slack,TRUE));
         SCIP_CALL( SCIPaddVar(scip, slack) );
-
+        /*
         char consname[256];
         snprintf(consname, sizeof(consname), "scc_%d_%s", i, SCIPvarGetName(slack));
         SCIP_VAR* consvars[1];
@@ -259,7 +267,7 @@ int main(int argc, char** argv)
 
         SCIP_CALL( SCIPaddCons(scip, ubcons) );
         SCIP_CALL( SCIPsetConsModifiable(scip,ubcons,TRUE));
-        SCIP_CALL( SCIPreleaseCons(scip, &ubcons) );
+        SCIP_CALL( SCIPreleaseCons(scip, &ubcons) );*/
         SCIP_CALL( SCIPreleaseVar(scip, &slack) );
     }
 

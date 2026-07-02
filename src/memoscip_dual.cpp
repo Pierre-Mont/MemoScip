@@ -85,33 +85,40 @@ vector<SCIP_Real> FusionResolution(SCIP* scip, SCIP_Longint child0, SCIP_Longint
 SCIP_RETCODE FinishLearn(SCIP* scip, SCIP_Longint node){
     vector<long> children = g_memoscip.nodeInfoMap[node].children;
     vector<SCIP_Real> ResFus(g_memoscip.CurrentVarIdx.size(),0.0);
+    SCIP_Longint parentNumber = g_memoscip.nodeInfoMap[node].parent;
+
     SCIP_Real rhsFus;
     cout<<"Finishing node "<<node<<endl;
+    if(g_options.verbosity > 1){
+        cout<<"Deleting node "<<node<<" "<<g_memoscip.nodeInfoMap[node].lb<<endl;
+        cout<<"number of children "<<g_memoscip.nodeInfoMap[node].children.size()<<endl;
+        cout<<"Bracnh var "<<g_memoscip.nodeInfoMap[node].BranchVar<<" "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[g_memoscip.nodeInfoMap[node].BranchVar]])<<endl;
+        cout<<"Curnnet node lb increase "<<g_memoscip.nodeInfoMap[node].lb_increase<<" versus children "<<endl;
+        
+    }
     if(children.empty())
         return SCIP_OKAY;
+
     if(children.size()==1){
-        FinishLearn(scip,children[0]);
+        assert(g_memoscip.nodeInfoMap.contains(children[0]));
+        if(g_options.verbosity > 2)
+            cout<<"Single child "<<children[0]<<" lb "<<g_memoscip.nodeInfoMap[children[0]].lb<<" versus parent lb "<<g_memoscip.nodeInfoMap[node].lb<<" "<<g_memoscip.nodeInfoMap[children[0]].DualProofCoef.first.size()<<" "<<g_memoscip.nodeInfoMap[children[0]].DualProofCoef.second<<" incr lb "<<g_memoscip.nodeInfoMap[children[0]].lb_increase<<endl;
         assert(g_memoscip.nodeInfoMap[children[0]].lb<g_memoscip.TOP);
-        vector<SCIP_Real> CDP1 = g_memoscip.nodeInfoMap[children[0]].DualProofCoef.first;
-        size_t nnz1 = CDP1.size();
-        vector<int> inds1 = g_memoscip.nodeInfoMap[children[0]].DualProofInds;
-        assert(nnz1==g_memoscip.nodeInfoMap[children[0]].DualProofInds.size());
-        assert(nnz1==inds1.size());
-        for(size_t i = 0; i < nnz1; ++i )
-        {
-            SCIP_Real coef = CDP1[i];
-            if(!SCIPisDualfeasZero(scip,coef) && g_memoscip.nodeInfoMap[children[0]].DualProofInds[i] != g_memoscip.AuxVar[g_memoscip.nodeInfoMap[children[0]].BranchVar])
-                ResFus[inds1[i]]=max(coef,0.0);
-            //cout<<i<<" "<<coef<<" * "<<SCIPvarGetName(g_memoscip.nodeInfoMap[child0].DualProofInds[i])<<endl;
-        }
-        rhsFus=g_memoscip.nodeInfoMap[children[0]].DualProofCoef.second;
+        assert(fabs(g_memoscip.nodeInfoMap[children[0]].DualProofCoef.second-g_memoscip.nodeInfoMap[children[0]].lb_increase)<1e-5);
     }
     if(children.size()==2){
         FinishLearn(scip,children[0]);
         FinishLearn(scip,children[1]);
-
+        if(g_options.verbosity > 2){
+                    cout<<"Two children "<<children[0]<<" lb "<<g_memoscip.nodeInfoMap[children[0]].lb<<" versus parent lb "<<g_memoscip.nodeInfoMap[node].lb<<" "<<g_memoscip.nodeInfoMap[children[0]].DualProofCoef.first.size()<<" "<<g_memoscip.nodeInfoMap[children[0]].DualProofCoef.second<<" incr lb "<<g_memoscip.nodeInfoMap[children[0]].lb_increase<<endl;
+                    cout<<"Two children "<<children[1]<<" lb "<<g_memoscip.nodeInfoMap[children[1]].lb<<" versus parent lb "<<g_memoscip.nodeInfoMap[node].lb<<" "<<g_memoscip.nodeInfoMap[children[1]].DualProofCoef.first.size()<<" "<<g_memoscip.nodeInfoMap[children[1]].DualProofCoef.second<<" incr lb "<<g_memoscip.nodeInfoMap[children[1]].lb_increase<<endl;
+                }
         assert(g_memoscip.nodeInfoMap.contains(children[0]) && g_memoscip.nodeInfoMap.contains(children[1]));
-    
+        if(g_options.verbosity > 1){
+                        cout<<"Fusing proofs of children "<<children[0]<<" and "<<children[1]<<" to recover parent node "<<node<<" proof "<<endl;
+                        cout<<"proofs of children "<<children[0]<<" "<<g_memoscip.nodeInfoMap[children[0]].DualProofCoef.second<<" lb increase: "<<g_memoscip.nodeInfoMap[children[0]].lb_increase<<endl;
+                        cout<<"proofs of children "<<children[1]<<" "<<g_memoscip.nodeInfoMap[children[1]].DualProofCoef.second<<" lb increase: "<<g_memoscip.nodeInfoMap[children[1]].lb_increase<<endl;
+                    }
         assert(g_memoscip.nodeInfoMap[children[1]].BranchVar==g_memoscip.AuxVar[g_memoscip.nodeInfoMap[children[0]].BranchVar]);
         ResFus=FusionResolution(scip,children[0],children[1]);
         if(g_memoscip.nodeInfoMap[children[0]].Status!="INFEASIBLE" && g_memoscip.nodeInfoMap[children[1]].Status!="INFEASIBLE"){
@@ -127,6 +134,24 @@ SCIP_RETCODE FinishLearn(SCIP* scip, SCIP_Longint node){
             assert(1==0);
         }
     }
+
+    SCIP_Real rhs_summed=rhsFus;
+     //PRINT RESFUS
+            if(g_options.verbosity > 2){
+                cout<<"ResFus "<<endl;
+                for (size_t i = 0; i < ResFus.size(); i++)
+                {
+                    if(!SCIPisDualfeasZero(scip,ResFus[i])){
+                        if(ResFus[i]>0)
+                            cout<<"+"<<ResFus[i]<<" "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[i]])<<" ";
+                        else
+                            cout<<ResFus[i]<<" "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[i]])<<" ";
+                    }
+
+                }
+                cout<<" >= "<<rhsFus<<endl;
+            }
+
     for (size_t i = 0; i < g_memoscip.nodeInfoMap[node].DualProofCoef.first.size(); i++)
     {
         int idx =g_memoscip.nodeInfoMap[node].DualProofInds[i];
@@ -134,12 +159,57 @@ SCIP_RETCODE FinishLearn(SCIP* scip, SCIP_Longint node){
         //cout<<"red cost "<<g_memoscip.nodeInfoMap[node].redcosts[i]<<" FIncal ResFus "<<ResFus[idx]<<endl;
         assert(ResFus[idx]<g_memoscip.TOP);
     }
-    SCIP_Real rhs_summed=rhsFus+g_memoscip.nodeInfoMap[node].DualProofCoef.second;
-    SCIP_Longint parentNumber=g_memoscip.nodeInfoMap[node].parent;
+    rhs_summed+=g_memoscip.nodeInfoMap[node].DualProofCoef.second;
+
+     for(int i = (int)g_memoscip.nodeInfoMap[node].BPRemoval.size()-1; i >= 0; i--) {
+        if(g_options.verbosity > 4)
+            cout<<"removed "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.nodeInfoMap[node].BPRemoval[i].first])<<" "<<g_memoscip.nodeInfoMap[node].BPRemoval[i].second.size()<<endl;
+        int idxi = g_memoscip.nodeInfoMap[node].BPRemoval[i].first;
+        if(ResFus[idxi]>1e-5){
+            assert(ResFus[idxi]>1e-5);
+            for(size_t j = 0; j < g_memoscip.nodeInfoMap[node].BPRemoval[i].second.size(); j++) {
+                if(g_options.verbosity > 4)
+                    cout<<"explanation "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.nodeInfoMap[node].BPRemoval[i].second[j]])<<endl;
+                int idxj =g_memoscip.nodeInfoMap[node].BPRemoval[i].second[j];
+                //Temporary fix because negative coef are hard to handle.
+                ResFus[idxj]=rhs_summed*100;
+
+            }
+        }
+        ResFus[idxi]=0;
+    }
+    if(g_options.verbosity > 4)
+        cout<<"Node consistency "<<g_memoscip.nodeInfoMap[node].NodeConsistency.size()<<" "<<node<<endl;
+    for (size_t i = 0; i < g_memoscip.nodeInfoMap[node].NodeConsistency.size(); i++)
+    {
+        int idx =g_memoscip.nodeInfoMap[node].NodeConsistency[i].first;
+        ResFus[idx]=g_memoscip.nodeInfoMap[parentNumber].redcosts[idx];
+        rhs_summed=min(g_memoscip.nodeInfoMap[node].NodeConsistency[i].second,rhs_summed);
+        if(g_options.verbosity > 4)
+            cout<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[idx]])<< " "<< idx<<" "<<g_memoscip.nodeInfoMap[node].NodeConsistency[i].second<<" "<<ceil(g_memoscip.nodeInfoMap[node].NodeConsistency[i].second+g_memoscip.nodeInfoMap[node].lb)<<" "<<SCIPgetPrimalbound(scip)<<endl;
+        //assert(ceil(g_memoscip.nodeInfoMap[node].NodeConsistency[i].second+g_memoscip.nodeInfoMap[node].lb)>=SCIPgetPrimalbound(scip));
+    }
+
+
+    if(g_options.verbosity > 2){
+        cout<<"final res "<<endl;
+        for (size_t i = 0; i < ResFus.size(); i++)
+        {
+            if(!SCIPisDualfeasZero(scip,ResFus[i])){
+                if(ResFus[i]>0)
+                    cout<<"+"<<ResFus[i]<<" "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[i]])<<" ";
+                else
+                    cout<<ResFus[i]<<" "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[i]])<<" ";
+            }
+
+        }
+        cout<<" >= "<<rhs_summed<<endl;
+    }
+
     vector<int> NewInds;
     vector<SCIP_Real> NewCoefs;
     vector<SCIP_VAR*> NewVar;
-    //cout<<"New cut with "<<ResFus.size()<<" variables "<< g_memoscip.nodeInfoMap[nodenumber].DualProofCoef.first.size()<<endl;
+    //cout<<"New cut with "<<ResFus.size()<<" variables "<< g_memoscip.nodeInfoMap[node].DualProofCoef.first.size()<<endl;
     for (size_t i = 0; i < ResFus.size(); i++)
     {
         
@@ -240,6 +310,11 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
     vector<SCIP_Real> newy_i(g_memoscip.CurrentVarIdx.size(),0.0);
 
     vector<SCIP_Real> redcost(g_memoscip.CurrentVarIdx.size(),0.0);
+
+    g_memoscip.nodeInfoMap[nodeNumber].DualProofInds.clear();
+    g_memoscip.nodeInfoMap[nodeNumber].DualProofCoef.first.clear();
+    g_memoscip.nodeInfoMap[nodeNumber].DualProofCoef.second=0.0;
+    
     if( g_memoscip.collector.dualsol.empty() )
         g_memoscip.collector.init(scip);
 
@@ -276,10 +351,7 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
     {
         parentredcost=g_memoscip.nodeInfoMap[0].redcosts;
     }else{
-        if(g_memoscip.nodeInfoMap[nodeNumber].DualSol.empty())
-            parentredcost=g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].redcosts;
-        else
-            parentredcost=g_memoscip.nodeInfoMap[nodeNumber].redcosts;
+        parentredcost=g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].redcosts;
     }
 
 
@@ -320,30 +392,12 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
 
     diffdualsol=g_memoscip.collector.dualsol;
     if(nodeNumber>1){
-        //If g_memoscip.nodeInfoMap[nodeNumber].DualSol.empty() then it is the first time we analyse the node 
-        //Otherwise it is the second time aka we solved the LP applied NC and BP and resolved the LP 
-        if(g_memoscip.nodeInfoMap[nodeNumber].DualSol.empty()){
-            //cout<<"First time analysing"<<endl;
-
             //We simply do the difference between the parent dual solution and the current dual solution
             assert(diffdualsol.size()>= g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol.size());
             for (size_t i = 0; i < g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol.size(); i++){
                 diffdualsol[i]-=g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol[i];
             }
-        }
-        else{
-            //cout<<"Second time analysing"<<endl;
-            //We save the first dual proof coef and inds and vars
-            //We do the difference between the current dual solution and the first dual solution
-            g_memoscip.nodeInfoMap[nodeNumber].FirstDualProofCoef=g_memoscip.nodeInfoMap[nodeNumber].DualProofCoef;
-            g_memoscip.nodeInfoMap[nodeNumber].FirstDualProofInds=g_memoscip.nodeInfoMap[nodeNumber].DualProofInds;
-            g_memoscip.nodeInfoMap[nodeNumber].DualProofInds.clear();
-            g_memoscip.nodeInfoMap[nodeNumber].DualProofCoef.first.clear();
-            g_memoscip.nodeInfoMap[nodeNumber].DualProofCoef.second=0;
-            for (size_t i = 0; i < g_memoscip.nodeInfoMap[nodeNumber].DualSol.size(); i++){
-                diffdualsol[i]-=g_memoscip.nodeInfoMap[nodeNumber].DualSol[i];
-            }
-        }
+        
     }
 
     //We iterate over all rows and add the rows multiplied by the dual solution to the proof row
@@ -354,7 +408,7 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
         if(SCIProwGetNNonz(rows[i])>1){
             if(g_options.verbosity > 2 && dual!=0){
                 if(i<(int)g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol.size())
-                    cout << "Row " << SCIProwGetName(rows[i]) <<" "<<g_memoscip.collector.dualsol[i]<<" "<<g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol[i]<<" "<<dual<<endl;
+                    cout << "Row " << SCIProwGetName(rows[i]) <<" "<<g_memoscip.collector.dualsol[i]<<" "<<g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol[i]<<" "<<dual<<" sumdualk "<<sumdual<<endl;
                 else 
                     cout << "Row " << SCIProwGetName(rows[i]) <<" "<<g_memoscip.collector.dualsol[i]<<" "<<dual<<endl;
             }
@@ -395,29 +449,19 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
     if(nodeNumber>1){
         //If g_memoscip.nodeInfoMap[nodeNumber].y_i.empty() then it is the first time we analyse the node 
         //Otherwise it is the second time aka we solved the LP applied NC and BP and resolved the LP 
-        if(g_memoscip.nodeInfoMap[nodeNumber].y_i.empty()){
-            //If variable is fixed to 0 then dual value is 0. 
-            for (size_t i = 0; i < g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].y_i.size(); i++){
-                if(g_memoscip.VarUb[i]==0){
-                    assert(newy_i[i]==0);
-                    diffy_i[i]=-g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].y_i[i];
-                } 
-                else{
-                    diffy_i[i]-=g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].y_i[i];
-                    assert(g_memoscip.VarLb[g_memoscip.AuxVar[i]]==0 || SCIPisDualfeasZero(scip,diffy_i[i]));
-                }
-            }
-        }else{
-            for (size_t i = 0; i < g_memoscip.nodeInfoMap[nodeNumber].y_i.size(); i++){
-                if(g_memoscip.VarUb[i]==0){
-                    assert(newy_i[i]==0);
-                    diffy_i[i]=-g_memoscip.nodeInfoMap[nodeNumber].y_i[i];
-                } 
-                else{
-                    diffy_i[i]-=g_memoscip.nodeInfoMap[nodeNumber].y_i[i];
-                }
+        
+        //If variable is fixed to 0 then dual value is 0. 
+        for (size_t i = 0; i < g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].y_i.size(); i++){
+            if(g_memoscip.VarUb[i]==0){
+                assert(newy_i[i]==0);
+                diffy_i[i]=-g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].y_i[i];
+            } 
+            else{
+                diffy_i[i]-=g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].y_i[i];
+                assert(g_memoscip.VarLb[g_memoscip.AuxVar[i]]==0 || SCIPisDualfeasZero(scip,diffy_i[i]));
             }
         }
+       
     }
 
     vector<SCIP_Real> TempCoef(g_memoscip.CurrentVarIdx.size(),0.0);
@@ -465,7 +509,6 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
 
     for(size_t i = 0; i < g_memoscip.CurrentVarIdx.size(); ++i )
     {
-        int currv = g_memoscip.CurrentVarIdx[i];
         SCIP_Real coef = TempCoef[i];
         //compute the true redcost
         if(i<parentredcost.size())
@@ -481,23 +524,21 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
         g_memoscip.nodeInfoMap[nodeNumber].DualProofInds.push_back(i);
         if(g_options.debug){
             if(i<parentredcost.size()){
-                if( g_memoscip.nodeInfoMap[nodeNumber].FirstDualProofInds.empty()){
-                    if(g_options.verbosity > 3){
-                        cout<<"COEF IN PROOF "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[i]])<<" "<<coef<<" vs parent red "<<parentredcost[i]<<" new red "<<parentredcost[i]-coef<< " LB "<<g_memoscip.VarLb[i]<<" UB "<<g_memoscip.VarUb[i]<<endl;
-                        cout<<parentredcost[i]-coef<<endl;
-                    }
-                    assert(parentredcost[i]-coef>-9.9e-1|| 0==g_memoscip.VarUb[i]);
+                if(g_options.verbosity > 3){
+                    cout<<"COEF IN PROOF "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[i]])<<" "<<coef<<" vs parent red "<<parentredcost[i]<<" new red "<<parentredcost[i]-coef<< " LB "<<g_memoscip.VarLb[i]<<" UB "<<g_memoscip.VarUb[i]<<endl;
+                    cout<<parentredcost[i]-coef<<endl;
                 }
+                assert(parentredcost[i]-coef>-9.9e-1|| 0==g_memoscip.VarUb[i] || !g_memoscip.nodeInfoMap[nodeNumber].DualSol.empty());
             }else {
                 assert(SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[i]])[2]=='s');
                 assert(coef<1e-9);
             }
         }
     }
-    
     g_memoscip.nodeInfoMap[nodeNumber].DualSol=g_memoscip.collector.dualsol;
     g_memoscip.nodeInfoMap[nodeNumber].y_i=newy_i;
     g_memoscip.nodeInfoMap[nodeNumber].redcosts = redcost;
+    assert(!redcost.empty());
     g_memoscip.nodeInfoMap[nodeNumber].lb=g_memoscip.collector.objval;
     g_memoscip.nodeInfoMap[nodeNumber].DualProofCoef.second=sumdual;
     g_memoscip.nodeInfoMap[nodeNumber].Status="FEASIBLE"; 
@@ -505,17 +546,12 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
     if(g_options.verbosity > 1){
         cout<<g_memoscip.collector.objval<<" "<<g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].lb<<" Truesumdual "<<Truesumdual<<" "<<Truesumdual-g_memoscip.collector.objval<<endl;
     }
-    if(g_memoscip.nodeInfoMap[nodeNumber].FirstDualProofInds.empty()){
-        if(g_options.verbosity > 1){
-            cout<<"DIFF Objval "<<g_memoscip.collector.objval-g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].lb<<" versus sumdiffdual "<<sumdual<<endl;
-        }
-        assert(fabs(g_memoscip.collector.objval-sumdual-g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].lb) < 1e-2|| g_memoscip.collector.objval>= SCIPgetPrimalbound(scip));
-    }else{
-        if(g_options.verbosity > 1){
-            cout<<"DIFF Objval "<<g_memoscip.collector.objval-g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].lb<<" versus sumdiffdual "<<sumdual+g_memoscip.nodeInfoMap[nodeNumber].FirstDualProofCoef.second<<endl;
-        }
-        assert(fabs(g_memoscip.collector.objval-sumdual-g_memoscip.nodeInfoMap[nodeNumber].FirstDualProofCoef.second-g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].lb) < 1e-2 || g_memoscip.collector.objval>= SCIPgetPrimalbound(scip));
+
+    if(g_options.verbosity > 1){
+        cout<<"DIFF Objval "<<g_memoscip.collector.objval-g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].lb<<" versus sumdiffdual "<<sumdual<<endl;
     }
+    assert(fabs(g_memoscip.collector.objval-sumdual-g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].lb) < 1e-2|| g_memoscip.collector.objval>= SCIPgetPrimalbound(scip));
+    
 
     SCIPaggrRowFree(scip, &proofrow);
         
@@ -550,16 +586,6 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
     SCIP* scip,
     SCIP_Longint nodeNumber)
 {
-    if(!g_memoscip.nodeInfoMap[nodeNumber].DualProofInds.empty()){
-        g_memoscip.nodeInfoMap[nodeNumber].FirstDualProofCoef=g_memoscip.nodeInfoMap[nodeNumber].DualProofCoef;
-        g_memoscip.nodeInfoMap[nodeNumber].FirstDualProofInds=g_memoscip.nodeInfoMap[nodeNumber].DualProofInds;
-        g_memoscip.nodeInfoMap[nodeNumber].DualProofInds.clear();
-        g_memoscip.nodeInfoMap[nodeNumber].DualProofCoef.first.clear();
-        g_memoscip.nodeInfoMap[nodeNumber].DualProofCoef.second=0;
-        g_memoscip.nodeInfoMap[nodeNumber].DualSol.clear();
-        g_memoscip.nodeInfoMap[nodeNumber].y_i.clear();
-        g_memoscip.nodeInfoMap[nodeNumber].redcosts.clear();
-    }
     //If INF is true then we collect the infeasibility certificate from farkas rows
     //Otherwise return a basic infeasibility certificate from the variables that are fixed to 0
     if(g_options.INF){
@@ -594,7 +620,7 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
         for (size_t i = 0; i < g_memoscip.CurrentVarIdx.size(); ++i)
         {
             int currv = g_memoscip.CurrentVarIdx[i];
-            int curraux= g_memoscip.CurrentVarIdx[g_memoscip.AuxVar[i]];
+            //int curraux= g_memoscip.CurrentVarIdx[g_memoscip.AuxVar[i]];
             coef= SCIPaggrRowGetProbvarValue(proofrow, currv);
             if(!SCIPisDualfeasZero(scip,coef)){
                 //cout<<i<<" "<<SCIPvarGetName(g_memoscip.AllVars[currv])<<" "<<coef<<" bounds "<<SCIPvarGetLbLocal(g_memoscip.AllVars[currv])<<" "<<SCIPvarGetUbLocal(g_memoscip.AllVars[currv])<<endl;
@@ -626,7 +652,6 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
         
         for(size_t i = 0; i < g_memoscip.CurrentVarIdx.size(); ++i )
         {
-            int currv = g_memoscip.CurrentVarIdx[i];
             SCIP_Real coef = Coefs[i];
             if(SCIPisDualfeasZero(scip,coef))
                 continue;
@@ -649,7 +674,6 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
     }else{
         for (size_t i = 0; i < g_memoscip.CurrentVarIdx.size(); ++i)
         {
-            int currv = g_memoscip.CurrentVarIdx[i];
             if(g_memoscip.VarUb[i]==0){
                 g_memoscip.nodeInfoMap[nodeNumber].DualProofCoef.first.push_back(g_memoscip.TOP);
                 g_memoscip.nodeInfoMap[nodeNumber].DualProofInds.push_back(i);

@@ -24,6 +24,7 @@ struct NodeInfo {
     int number = 0;
     SCIP_Real lb_increase = 0.0;
     SCIP_Real lb = 0.0;
+    SCIP_Real ub = 0.0;
     bool visited = false;
     std::vector<long> children;
     int BranchVar = 0;
@@ -51,8 +52,7 @@ struct NodeInfo {
     std::vector<SCIP_Real> farkasColCoef;
     std::vector<SCIP_VAR*> farkasColVars;
 
-    std::vector<std::pair<int, std::vector<int>>> InitialBPRemoval;
-    std::vector<std::pair<int, std::vector<int>>> AfterNCBPRemoval;
+    std::vector<std::pair<int, std::vector<int>>> BPRemoval;
 
     std::vector<int> VarLbDebug;
     std::vector<int> VarUbDebug;

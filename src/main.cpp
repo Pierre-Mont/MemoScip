@@ -63,7 +63,6 @@ int main(int argc, char** argv)
     
     if (g_options.verbosity < 0)
         g_options.verbosity = 0;
-    SCIP_CALL(SCIPsetIntParam(scip, "display/verblevel", g_options.verbosity));
 
 
     //Do DFS node selection
@@ -77,9 +76,12 @@ int main(int argc, char** argv)
         SCIP_CALL( SCIPsetIntParam(scip, "branching/pscost/priority", 2000000) );    // register handlers
 
     //FULL VERBOSITY
-     if(g_options.verbosity > 3){
+     if(g_options.verbosity > 5){
         SCIP_CALL( SCIPsetIntParam(scip, "display/verblevel", 2) );
         SCIP_CALL( SCIPsetBoolParam(scip, "display/lpinfo", TRUE) );
+    }else{
+        SCIP_CALL( SCIPsetIntParam(scip, "display/verblevel", 0) );
+        SCIP_CALL( SCIPsetBoolParam(scip, "display/lpinfo", FALSE) );
     }
 
     // disable heuristics, presolving, separation
@@ -157,7 +159,7 @@ int main(int argc, char** argv)
     SCIP_CALL( SCIPsetRealParam(scip, "numerics/epsilon",     1e-6) );
     SCIP_CALL( SCIPsetIntParam(scip, "lp/scaling", 0) );
 
-    
+    SCIPsetBoolParam(scip, "misc/scaleobj", FALSE);
 
     includeLPSolveEventHandler(scip);
     register_memoscip_branchrule(scip);
@@ -367,8 +369,8 @@ int main(int argc, char** argv)
     }
     SCIP_CALL(SCIPsolve(scip));
 
-    /*if (g_options.output > 1)
-        FinishLearn(scip, 1);*/
+    
+    //FinishLearn(scip, 1);
 
     if (g_options.output > 0)
         SCIP_CALL(SCIPwriteTransProblem(scip, "end.lp", "lp", FALSE));

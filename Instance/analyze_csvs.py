@@ -52,6 +52,36 @@ def try_int(s):
         return None
 
 
+def parse_gap_value(s):
+    if s is None:
+        return None
+    txt = str(s).strip().replace(',', '.')
+    if not txt:
+        return None
+    if txt.endswith('%'):
+        txt = txt[:-1]
+    return try_float(txt)
+
+
+def is_gap_zero(s, tol=1e-12):
+    g = parse_gap_value(s)
+    return g is not None and abs(g) <= tol
+
+
+def extract_bppc_i_j(instance_name: str):
+    # Keep only BPPC_i instances with i <= 7, and extract j from suffix _0.j.xz
+    name = Path(str(instance_name).strip()).name
+    mi = re.search(r'BPPC_(\d+)', name)
+    mj = re.search(r'_0\.(\d+)\.xz$', name)
+    if not mi or not mj:
+        return None, None
+    i_val = int(mi.group(1))
+    if i_val > 7:
+        return None, None
+    j_val = int(mj.group(1))
+    return i_val, j_val
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Concatenate result CSVs in a directory into a wide table and compute averages.'
@@ -210,6 +240,69 @@ def main():
         print(f"Wrote {out_fname} plot to {outpath}")
         return approach_avgs
 
+    def plot_bppc_nodes_by_density(data, approaches, out_fname="bppc_nodes_by_density.png"):
+        # Keep only BPPC_i with i <= 7 and group by density j from suffix _0.j.xz
+        by_density = {}  # j -> approach -> list(nodes)
+        for inst, amap in data.items():
+            i_val, j_val = extract_bppc_i_j(inst)
+            if i_val is None or j_val is None:
+                continue
+            if j_val not in by_density:
+                by_density[j_val] = {a: [] for a in approaches}
+            for a in approaches:
+                entry = amap.get(a)
+                if not entry:
+                    continue
+                nodes_val = entry.get('nodes')
+                if nodes_val is None:
+                    continue
+                by_density[j_val].setdefault(a, []).append(nodes_val)
+
+        if not by_density:
+            print("No BPPC_i (i<=7) instances with _0.j.xz suffix found; skipping density/nodes plot.")
+            return {}
+
+        try:
+            import matplotlib.pyplot as plt
+        except Exception:
+            print("matplotlib not available; skipping BPPC density/nodes plot.")
+            return {}
+
+        js = sorted(by_density.keys())
+        plt.figure()
+        approach_avgs = {}
+        for a in approaches:
+            x = []
+            y = []
+            for j_val in js:
+                vals = by_density[j_val].get(a, [])
+                if not vals:
+                    continue
+                avg_nodes = statistics.mean(vals)
+                density = j_val / 10.0
+                x.append(density)
+                y.append(avg_nodes)
+                approach_avgs.setdefault(a, {})[j_val] = avg_nodes
+            if x and y:
+                plt.plot(x, y, marker='o', label=a)
+
+        if not any(approach_avgs.get(a) for a in approaches):
+            plt.close()
+            print("No node values available for BPPC density/nodes plot.")
+            return {}
+
+        plt.xlabel('Density (0.j)')
+        plt.ylabel('Average developed nodes')
+        plt.title('BPPC (i<=7): average developed nodes by density')
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        outpath = Path(out_fname)
+        plt.savefig(outpath)
+        plt.close()
+        print(f"Wrote BPPC density/nodes plot to {outpath}")
+        return approach_avgs
+
     # call plotting functions and get averages per size for nodes and time
     nodes_avgs = plot_metric_by_size(
         data, approaches, 'nodes', 'Average nodes developed',
@@ -220,6 +313,11 @@ def main():
         data, approaches, 'time', 'Average time',
         'Average time by instance size per approach',
         out_fname=str(dirpath / 'time_by_size.png')
+    )
+    bppc_nodes_density_avgs = plot_bppc_nodes_by_density(
+        data,
+        approaches,
+        out_fname=str(dirpath / 'bppc_nodes_by_density.png')
     )
 
     # print coefficient of difference between size 100 and 300 for each approach
@@ -245,7 +343,7 @@ def main():
     for inst, amap in data.items():
         zero_gap_primal = {}
         for a, m in amap.items():
-            if m.get('gap') == '0' or m.get('gap') == '0.0':
+            if is_gap_zero(m.get('gap')):
                 if m.get('primal') is not None:
                     zero_gap_primal[a] = m.get('primal')
         if len(zero_gap_primal) > 1:
@@ -270,6 +368,8 @@ def main():
         times = []
         nodes = []
         cuts_list = []
+        gaps = []
+        optimal_count = 0
         for inst, amap in data.items():
             m = amap.get(a)
             if not m:
@@ -280,9 +380,15 @@ def main():
                 nodes.append(m.get('nodes'))
             if m.get('cuts') is not None:
                 cuts_list.append(m.get('cuts'))
+            g = parse_gap_value(m.get('gap'))
+            if g is not None:
+                gaps.append(g)
+                if abs(g) <= 1e-12:
+                    optimal_count += 1
         tavg = statistics.mean(times) if times else None
         navg = statistics.mean(nodes) if nodes else None
         cavg = statistics.mean(cuts_list) if cuts_list else None
+        gavg = statistics.mean(gaps) if gaps else None
         print(f"Approach: {a}")
         if tavg is not None:
             print(f"  average_time = {tavg:.6g}   (n={len(times)})")
@@ -296,6 +402,51 @@ def main():
             print(f"  average_cuts = {cavg:.6g}   (n={len(cuts_list)})")
         else:
             print("  average_cuts = (no data)")
+        if gavg is not None:
+            print(f"  average_gap = {gavg:.6g}   (n={len(gaps)})")
+            print(f"  solved_optimality_gap0 = {optimal_count}   (over n={len(gaps)} with gap data)")
+        else:
+            print("  average_gap = (no data)")
+            print("  solved_optimality_gap0 = (no gap data)")
+
+    # BPPC-specific: filter BPPC_i with i <= 7, then aggregate by j in _0.j.xz
+    print("\nBPPC stats by j (only instances BPPC_i with i <= 7, grouped on _0.j.xz):")
+    for a in approaches:
+        per_j = defaultdict(lambda: {'nodes': [], 'gaps': [], 'optimal_count': 0})
+        for inst, amap in data.items():
+            i_val, j_val = extract_bppc_i_j(inst)
+            if i_val is None or j_val is None:
+                continue
+            m = amap.get(a)
+            if not m:
+                continue
+            if m.get('nodes') is not None:
+                per_j[j_val]['nodes'].append(m.get('nodes'))
+            g = parse_gap_value(m.get('gap'))
+            if g is not None:
+                per_j[j_val]['gaps'].append(g)
+                if abs(g) <= 1e-12:
+                    per_j[j_val]['optimal_count'] += 1
+
+        if not per_j:
+            continue
+
+        print(f"Approach: {a}")
+        for j_val in sorted(per_j.keys()):
+            nlist = per_j[j_val]['nodes']
+            glist = per_j[j_val]['gaps']
+            navg = statistics.mean(nlist) if nlist else None
+            gavg = statistics.mean(glist) if glist else None
+            optimal_count = per_j[j_val]['optimal_count']
+            n_nodes = len(nlist)
+            n_gap = len(glist)
+            navg_txt = f"{navg:.6g}" if navg is not None else "(no data)"
+            gavg_txt = f"{gavg:.6g}" if gavg is not None else "(no data)"
+            print(
+                f"  j={j_val}: average_nodes={navg_txt} (n={n_nodes}), "
+                f"average_gap={gavg_txt} (n={n_gap}), "
+                f"solved_optimality_gap0={optimal_count}"
+            )
 
 
 if __name__ == '__main__':

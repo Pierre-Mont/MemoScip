@@ -18,12 +18,11 @@
 #include <string>
 #include <vector>
 
+
 using namespace std;
 
 int main(int argc, char** argv)
 {
-    setenv("OPENBLAS_NUM_THREADS", "1", 1);
-
     std::string parseErr;
     if (!parse_memoscip_cli(argc, argv, g_options, parseErr))
     {
@@ -63,8 +62,8 @@ int main(int argc, char** argv)
     
     if (g_options.verbosity < 0)
         g_options.verbosity = 0;
-
-
+    
+    SCIP_CALL(SCIPsetIntParam(scip, "lp/refactorinterval", 200));
     //Do DFS node selection
     SCIP_CALL( SCIPsetIntParam(scip, "nodeselection/dfs/stdpriority", 1000000) );
     //Pscost branching (disable strong branching)
@@ -84,20 +83,62 @@ int main(int argc, char** argv)
         SCIP_CALL( SCIPsetBoolParam(scip, "display/lpinfo", FALSE) );
     }
 
-    // disable heuristics, presolving, separation
+    // disable heuristics, presolving
     SCIP_CALL(SCIPsetHeuristics(scip, SCIP_PARAMSETTING_OFF, TRUE));
-    SCIP_CALL(SCIPsetSeparating(scip, SCIP_PARAMSETTING_OFF, TRUE));
     SCIP_CALL(SCIPsetPresolving(scip, SCIP_PARAMSETTING_OFF, TRUE));
     SCIP_CALL( SCIPsetIntParam(scip, "presolving/maxrounds", 0) );
     //SCIP_CALL(SCIPsetIntParam(scip,"misc/usesymmetry",0));
     SCIP_CALL(SCIPsetBoolParam(scip,"symmetries/enabled",FALSE));
 
+
+    //Disable all separators for the moment
+    
+    SCIP_CALL( SCIPsetIntParam(scip, "constraints/knapsack/sepacardfreq", -1) );
+    SCIP_CALL( SCIPsetIntParam(scip, "constraints/knapsack/sepafreq", -1) );
+    SCIP_CALL( SCIPsetIntParam(scip, "constraints/knapsack/maxsepacuts", 0) );
+    SCIP_CALL( SCIPsetIntParam(scip, "constraints/knapsack/maxsepacutsroot", 0) );
+    //SCIP_CALL( SCIPsetIntParam(scip, "constraints/linear/sepafreq", -1) );
+    //SCIP_CALL( SCIPsetIntParam(scip, "constraints/linear/maxsepacuts", 0) );
+    SCIP_CALL( SCIPsetIntParam(scip, "constraints/linear/maxsepacutsroot", 0) );
+    SCIP_CALL( SCIPsetIntParam(scip, "separating/mcf/freq", -1) );
+    SCIP_CALL( SCIPsetBoolParam(scip, "separating/mcf/separateknapsack", FALSE) );
+    SCIP_CALL(SCIPsetBoolParam(scip, "constraints/linear/upgrade/knapsack", FALSE));
+
+    // 2. Désactive individuellement CHAQUE séparateur natif de SCIP (freq = -1)
+    //    sans passer par SCIPsetSeparating, pour ne pas retoucher maxrounds
+    int nsepas = SCIPgetNSepas(scip);
+    SCIP_SEPA** sepas = SCIPgetSepas(scip);
+
+    for (int i = 0; i < nsepas; ++i) {
+        //cout<<"Disabling separator "<<SCIPsepaGetName(sepas[i])<<endl;
+        SCIPsepaSetFreq(sepas[i], -1);   // -1 = never (pas de SCIP_CALL, la fonction retourne void)
+    }
+
+
+    //TO VERIFY
     SCIP_CALL( SCIPsetIntParam(scip, "lp/disablecutoff", 1) );
+    SCIP_CALL( SCIPsetBoolParam(scip, "lp/alwaysgetduals", TRUE) );
+
+
+    if(g_options.sepa){
+        cout<<"Enabling custom separation"<<endl;
+        //Enable separators
+        SCIP_CALL( SCIPsetIntParam(scip, "separating/maxrounds", -1) );        // illimité par nœud (comportement par défaut)
+        SCIP_CALL( SCIPsetIntParam(scip, "separating/maxroundsroot", -1) );    // illimité à la racine
+        SCIP_CALL( SCIPsetIntParam(scip, "separating/poolfreq", 1) );    // at tout les noeuds
+    }else{
+        SCIP_CALL(SCIPsetSeparating(scip, SCIP_PARAMSETTING_OFF, TRUE));
+    }
+    //SCIP_CALL( SCIPsetIntParam(scip, "separating/cutagelimit", -1) );
 
     //Multi threading disabled
     SCIP_CALL( SCIPsetIntParam(scip, "lp/threads", 0) );
     SCIP_CALL( SCIPsetIntParam(scip, "parallel/maxnthreads", 1) );
     SCIP_CALL( SCIPsetIntParam(scip,"parallel/maxnthreads",1));
+
+    //SCIP_CALL( SCIPsetCharParam(scip, "lp/initalgorithm", 'c') );  
+    //SCIP_CALL( SCIPsetCharParam(scip, "lp/resolvealgorithm", 'c') );
+
     if(g_options.BC){
         cout<<"Bound propagation enabled"<<endl;
         //Enable basic propagation
@@ -148,7 +189,6 @@ int main(int argc, char** argv)
 
     // COllect FArkas
     SCIP_CALL( SCIPsetBoolParam(scip, "lp/checkfarkas", TRUE) );
-    SCIP_CALL( SCIPsetBoolParam(scip, "lp/alwaysgetduals", TRUE) );
     //Disable conflict
     SCIP_CALL(SCIPsetBoolParam(scip, "conflict/enable", FALSE));
 
@@ -157,7 +197,7 @@ int main(int argc, char** argv)
     SCIP_CALL( SCIPsetRealParam(scip, "numerics/feastol",     9e-5) );
     SCIP_CALL( SCIPsetRealParam(scip, "numerics/dualfeastol", 9e-5) );
     SCIP_CALL( SCIPsetRealParam(scip, "numerics/epsilon",     1e-6) );
-    SCIP_CALL( SCIPsetIntParam(scip, "lp/scaling", 0) );
+    //SCIP_CALL( SCIPsetIntParam(scip, "lp/scaling", 0) );
 
     SCIPsetBoolParam(scip, "misc/scaleobj", FALSE);
 
@@ -182,7 +222,7 @@ int main(int argc, char** argv)
     string pronbame=filepath;
     SCIP_VAR* v;
     int nvars = SCIPgetNVars(scip);
-
+    
     for (int i = 0; i < nconss; ++i)
     {
         SCIP_CONS* cons = conss[i];
@@ -218,7 +258,7 @@ int main(int argc, char** argv)
         SCIP_CALL(SCIPsetConsRemovable(scip,cons,FALSE));
         SCIP_CALL( SCIPreleaseVar(scip, &slack) );
     }
-
+    
     std::cout << "Converted " << converted << " linear constraints to equalities by adding slack vars\n";
     SCIP_VAR** vars = SCIPgetVars(scip);
     vars = SCIPgetVars(scip);
@@ -241,7 +281,7 @@ int main(int argc, char** argv)
         }
     }
     //Creat a pool of slack variables with a dummy constraint to keep them in the problem
-    for (int i = 0; i < g_options.nbslack; i++)
+    /*for (int i = 0; i < g_options.nbslack; i++)
     {
         slack = nullptr;
         char slackname[50];
@@ -250,28 +290,8 @@ int main(int argc, char** argv)
         SCIP_CALL(SCIPvarSetRemovable(slack,FALSE));
         SCIP_CALL(SCIPvarSetInitial(slack,TRUE));
         SCIP_CALL( SCIPaddVar(scip, slack) );
-        /*
-        char consname[256];
-        snprintf(consname, sizeof(consname), "scc_%d_%s", i, SCIPvarGetName(slack));
-        SCIP_VAR* consvars[1];
-        SCIP_Real coefs[1];
-        consvars[0] = slack;
-        coefs[0] = 1.0;
-        SCIP_CONS* ubcons = nullptr;
-
-        SCIP_CALL( SCIPcreateConsBasicLinear(scip, &ubcons,
-            consname,
-            1,
-            consvars,
-            coefs,
-            0,
-            SCIPinfinity(scip)) );
-
-        SCIP_CALL( SCIPaddCons(scip, ubcons) );
-        SCIP_CALL( SCIPsetConsModifiable(scip,ubcons,TRUE));
-        SCIP_CALL( SCIPreleaseCons(scip, &ubcons) );*/
         SCIP_CALL( SCIPreleaseVar(scip, &slack) );
-    }
+    }*/
 
     if(fileext==".opb"){
         //If problem is in .opb format, add x_{i0}+ x_{i1} = 1 for all variables
@@ -320,7 +340,7 @@ int main(int argc, char** argv)
 
     }
     nvars = SCIPgetNVars(scip);
-    g_memoscip.nOriginalVar=nvars-g_options.nbslack;
+    g_memoscip.nOriginalVar=nvars;//-g_options.nbslack;
 
     // Learning event handlers when -l=N (N>=1)
     if (g_options.learning > 0)
@@ -341,7 +361,7 @@ int main(int argc, char** argv)
     vars = SCIPgetVars(scip);
     nvars = SCIPgetNVars(scip);
     //Always prefer branching on varible x_{i1} and not x_{i0}.
-    for (int i = 0; i < nvars-g_options.nbslack; ++i)
+    for (int i = 0; i < nvars; ++i) //-g_options.nbslack; ++i)
     {
         v=vars[i];
         objcoefs.push_back(SCIPvarGetObj(v));
@@ -367,13 +387,14 @@ int main(int argc, char** argv)
         if (g_options.verbosity > 1)
             cout << "Time limit set to " << g_options.timelimit << " seconds" << endl;
     }
-    SCIP_CALL(SCIPsolve(scip));
 
+    SCIP_CALL(SCIPsolve(scip));
     
     //FinishLearn(scip, 1);
 
-    if (g_options.output > 0)
+    if (g_options.output > 0){
         SCIP_CALL(SCIPwriteTransProblem(scip, "end.lp", "lp", FALSE));
+    }
 
     cout<<"Solving Status : "<<SCIPgetStatus(scip)<<endl;
     cout<<"Solving time : "<<SCIPgetSolvingTime(scip)<<endl;
@@ -409,7 +430,7 @@ int main(int argc, char** argv)
     }
     // Cleanup: clear per-node bookkeeping map
     g_memoscip.nodeInfoMap.clear();
-    
+    //SCIP_CALL( SCIPprintStatistics(scip, NULL) );
     SCIP_CALL(SCIPfree(&scip));
     return 0;
 }

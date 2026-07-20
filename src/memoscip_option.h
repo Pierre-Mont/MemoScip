@@ -30,9 +30,13 @@ struct MemoSCIPRunOptions {
     /** Maximum time limit in seconds (0 = no limit). */
     int timelimit = 0;
 
-    int branchingHeuristic = 0;  //0: first fraction, 1: pscost, 2: report branching, 3: replscost
+    int branchingHeuristic = 0;  //0: first fraction, 1+: fallback SCIP branching, 3: relpscost, 4: replay from Instance/branch_replay_sequence.txt
 
     int branchingOrder = 1;    //0: branch on x_{i0} first, 1: branch on x_{i1} first
+
+    int maxCutQueueSize = 0;
+
+    bool sepa = false; // True = enable separation, False = disable separation
 };
 
 /** Parse argv. Expects one instance file path (any non-flag argument) and optional flags. */

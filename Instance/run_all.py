@@ -35,7 +35,37 @@ PATTERNS = {
 }
 
 
-def parse_metrics(text: str):
+MEMOBOUND_MASTER_EXEC = Path("/home/kisouke/learninglpsolver/cpp/memoboundMaster").resolve()
+
+PATTERNS_MEMOBOUND_MASTER = {
+    "optimal": re.compile(r"Learning optimal solution is\s*([\d\.Ee+-]+)", re.IGNORECASE),
+    "nodes": re.compile(r"in\s*(\d+)\s*nodes", re.IGNORECASE),
+    "last_rhs": re.compile(r"last rhs is\s*([\d\.Ee+-]+)", re.IGNORECASE),
+    "cuts": re.compile(r"nb of added constraints is\s*(\d+)", re.IGNORECASE),
+    "lp_time": re.compile(r"([\d\.Ee+-]+)\s*spent solving LPs", re.IGNORECASE),
+    "avg_iterations": re.compile(r"with\s*(\d+)\s*iterations in average", re.IGNORECASE),
+    "full_time": re.compile(r"full time is\s*:\s*([\d\.Ee+-]+)", re.IGNORECASE),
+}
+
+
+def parse_metrics(text: str, exe: Path):
+    # memoboundMaster has a custom single-line summary format.
+    if exe.resolve() == MEMOBOUND_MASTER_EXEC:
+        res = {}
+        for k, rx in PATTERNS_MEMOBOUND_MASTER.items():
+            m = rx.search(text)
+            res[k] = m.group(1) if m else ""
+
+        return {
+            "status": "OPTIMAL" if res.get("optimal") else "",
+            "time": res.get("full_time", ""),
+            "nodes": res.get("nodes", ""),
+            "cuts": res.get("cuts", ""),
+            "primal": res.get("optimal", ""),
+            "dual": res.get("last_rhs", ""),
+            "gap": "0" if res.get("optimal") and res.get("last_rhs") and res.get("optimal") == res.get("last_rhs") else "",
+        }
+
     res = {}
     for k, rx in PATTERNS.items():
         m = rx.search(text)
@@ -118,7 +148,7 @@ def main():
         print("Running", inst)
         out_text, rc = run_instance(exe, inst, forward_args, args.timeout)
         # parse metrics from combined stdout/stderr
-        metrics = parse_metrics(out_text if isinstance(out_text, str) else "")
+        metrics = parse_metrics(out_text if isinstance(out_text, str) else "", exe)
         row = {
             "file": inst.name,
             "returncode": rc,

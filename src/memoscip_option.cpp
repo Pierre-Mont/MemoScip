@@ -82,6 +82,11 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
         out.kpcg = true;
         return true;
     }
+    if (std::strcmp(s, "-sep") == 0)
+    {
+        out.sepa = true;
+        return true;
+    }
     /* -v... / -l... */
     if (s[1] == 'v' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
     {
@@ -179,6 +184,19 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
             return false;
         return true;
     }
+
+    if (s[1] == 'c' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
+    {
+        const char* rest = s + 2;
+        if (*rest == '\0')
+        {
+            errMsg = "-c requires an integer value (e.g. -c=1 or -c1)";
+            return false;
+        }
+        if (!parse_int_suffix("-c", rest, out.maxCutQueueSize, errMsg))
+            return false;
+        return true;
+    }
     
     if (s[1] == 'b' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
     {
@@ -247,8 +265,9 @@ void print_memoscip_usage(const char* programName)
         << "  -s=N       Number of slack variables\n"
         << "  -p         Profiling / reserved for future use\n"
         << "  -kpcg      Treat input as KPCG instance and use internal reader\n"
-        << "  -b=N       Branching heuristic (integer, default 0)\n"
+        << "  -b=N       Branching heuristic (0=custom, 3=relpscost, 4=replay from Instance/branch_replay_sequence.txt)\n"
         << "  -bo=N      Branching order (integer, default 1)\n"
+        << "  -c=N       Custom integer option (default 0)\n"
         << "\n"
         << "Examples:\n"
         << "  " << programName << " problem.lp -v=1\n"

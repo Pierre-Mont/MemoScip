@@ -229,9 +229,13 @@ SCIP_RETCODE FinishLearn(SCIP* scip, SCIP_Longint node){
             assert(SCIPisDualfeasZero(scip,ResFus[i]));
     }
 
-
-
-    SCIP_VAR* slack=g_memoscip.AllVars[g_memoscip.slackVar[g_memoscip.nbAddedctr]]; 
+        SCIP_VAR* slack = nullptr;
+        char slackname[50];
+        snprintf(slackname, 50, "sc_%d", g_memoscip.nbAddedctr);
+        SCIP_CALL( SCIPcreateVarBasic(scip, &slack, slackname, 0.0, SCIPinfinity(scip), 0.0, SCIP_VARTYPE_CONTINUOUS) );
+        SCIP_CALL(SCIPvarSetRemovable(slack,TRUE));
+        SCIP_CALL(SCIPvarSetInitial(slack,TRUE));
+        SCIP_CALL( SCIPaddVar(scip, slack) );
    
     NewVar.push_back(slack);
     NewInds.push_back(g_memoscip.CurrentVarIdx.size());
@@ -285,6 +289,7 @@ SCIP_RETCODE FinishLearn(SCIP* scip, SCIP_Longint node){
     cout<<" >= "<<rhs_summed<<endl;
 
     g_memoscip.nbAddedctr++;
+    SCIP_CALL( SCIPreleaseVar(scip, &slack) );
 
     return SCIP_OKAY;
 
@@ -300,11 +305,13 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
     int ncols = SCIPgetNLPCols(scip);
     int nrows = SCIPgetNLPRows(scip);
 
+    //cout<<"SSolving LP "<<nodeNumber<<" with "<<ncols<<" columns and "<<nrows<<" rows"<<endl;
     
     vector<SCIP_Real> parentredcost;
     
-    vector<SCIP_Real> diffdualsol(nrows);
+    vector<SCIP_Real> IndexedDualSol(g_memoscip.nbctr,0.0);
     
+
     vector<SCIP_Real> diffredcost(ncols);
     vector<SCIP_Real> diffy_i(g_memoscip.CurrentVarIdx.size());
     vector<SCIP_Real> newy_i(g_memoscip.CurrentVarIdx.size(),0.0);
@@ -327,7 +334,8 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
     
     SCIP_COL** cols = SCIPgetLPCols(scip);
     SCIP_ROW** rows = SCIPgetLPRows(scip);
-
+    SCIP_LPSOLSTAT stat = SCIPgetLPSolstat(scip);
+    assert(stat==SCIP_LPSOLSTAT_OPTIMAL || stat==SCIP_LPSOLSTAT_OBJLIMIT);
     if(g_options.debug){
         for( size_t i = 0; i < g_memoscip.CurrentVarIdx.size(); i++ )
         {
@@ -335,9 +343,11 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
             SCIP_VAR* var = SCIPcolGetVar(cols[currv]);
             SCIP_Real rc  = g_memoscip.collector.redcost[currv];  
             redcost[i]=rc;
-
-            //cout<<SCIPvarGetName(g_memoscip.AllVars[currv])<<" "<<SCIPvarGetName(var)<<endl;
-            //cout<<SCIPgetVarRedcost(scip,g_memoscip.AllVars[currv])<<" "<<g_memoscip.collector.redcost[currv]<<endl;
+            /*if(rc!=0)
+                cout<<" "<<SCIPvarGetName(var)<<" "<<g_memoscip.collector.redcost[currv]<<endl;
+            cout<<SCIPgetVarRedcost(scip,g_memoscip.AllVars[currv])<<" "<<g_memoscip.collector.redcost[currv]<<endl;*/
+            cout<<i<<" "<<SCIPvarGetIndex(var)<<" "<<SCIPvarGetName(var)<<endl;
+            cout<<" "<<SCIPvarGetName(var)<<" "<<SCIPvarGetName(g_memoscip.AllVars[currv])<<endl;
             assert(var == g_memoscip.AllVars[currv]);
 
             assert(SCIPisFeasEQ(scip, SCIPgetVarRedcost(scip, g_memoscip.AllVars[currv]), g_memoscip.collector.redcost[currv]));
@@ -390,27 +400,24 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
         SCIP_CALL(SCIPaggrRowCreate(scip, &Trueproofrow));
     }
 
-    diffdualsol=g_memoscip.collector.dualsol;
-    if(nodeNumber>1){
-            //We simply do the difference between the parent dual solution and the current dual solution
-            assert(diffdualsol.size()>= g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol.size());
-            for (size_t i = 0; i < g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol.size(); i++){
-                diffdualsol[i]-=g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol[i];
-            }
-        
-    }
 
     //We iterate over all rows and add the rows multiplied by the dual solution to the proof row
     for (int i = 0; i < nrows; ++i)
     {
-        SCIP_Real dual = diffdualsol[i];
+        SCIP_Real dual = g_memoscip.collector.dualsol[i];
+        int idx = SCIProwGetIndex(rows[i]);
+        IndexedDualSol[idx] = dual;
+        if(idx < (int)g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol.size()){
+            dual-=g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol[idx];
+        }
+        
         //if size of a row is greater than 1
-        if(SCIProwGetNNonz(rows[i])>1){
-            if(g_options.verbosity > 2 && dual!=0){
-                if(i<(int)g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol.size())
-                    cout << "Row " << SCIProwGetName(rows[i]) <<" "<<g_memoscip.collector.dualsol[i]<<" "<<g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol[i]<<" "<<dual<<" sumdualk "<<sumdual<<endl;
+        if(SCIProwGetNNonz(rows[i])>1){            
+            if(g_options.verbosity > 2  && dual!=0){
+                if(idx<(int)g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol.size())
+                    cout << "Row " << SCIProwGetName(rows[i]) << "INdew "<< SCIProwGetIndex(rows[i]) <<" i "<<i<<" Age: " << SCIProwGetAge(rows[i])<<" "<<" "<<g_memoscip.collector.dualsol[i]<<" "<<g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].DualSol[idx]<<" "<<dual<<" sumdual "<<sumdual<<endl;
                 else 
-                    cout << "Row " << SCIProwGetName(rows[i]) <<" "<<g_memoscip.collector.dualsol[i]<<" "<<dual<<endl;
+                    cout << "Row " << SCIProwGetName(rows[i]) <<" INdew "<< SCIProwGetIndex(rows[i])<<" i "<<i<<" "<<g_memoscip.collector.dualsol[i]<<" "<<dual<<" Age: " << SCIProwGetAge(rows[i])<<endl;
             }
             if(fabs(SCIProwGetRhs(rows[i])*dual)  > 1e-5   && SCIProwGetRhs(rows[i]) != SCIPinfinity(scip)){
                 sumdual+=dual*SCIProwGetRhs(rows[i]);
@@ -449,16 +456,19 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
     if(nodeNumber>1){
         //If g_memoscip.nodeInfoMap[nodeNumber].y_i.empty() then it is the first time we analyse the node 
         //Otherwise it is the second time aka we solved the LP applied NC and BP and resolved the LP 
-        
         //If variable is fixed to 0 then dual value is 0. 
         for (size_t i = 0; i < g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].y_i.size(); i++){
-            if(g_memoscip.VarUb[i]==0){
-                assert(newy_i[i]==0);
-                diffy_i[i]=-g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].y_i[i];
-            } 
-            else{
-                diffy_i[i]-=g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].y_i[i];
-                assert(g_memoscip.VarLb[g_memoscip.AuxVar[i]]==0 || SCIPisDualfeasZero(scip,diffy_i[i]));
+            if(g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].y_i[i]!=0)
+            {
+                //cout<<"Diff y_i "<<diffy_i[i]<<" Parent dual y_i "<<g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].y_i[i]<<" for variable "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[i]])<<endl;
+                if(g_memoscip.VarUb[i]==0){
+                    assert(newy_i[i]==0);
+                    diffy_i[i]=-g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].y_i[i];
+                } 
+                else{
+                    diffy_i[i]-=g_memoscip.nodeInfoMap[g_memoscip.nodeInfoMap[nodeNumber].parent].y_i[i];
+                    assert(g_memoscip.VarLb[g_memoscip.AuxVar[i]]==0 || SCIPisDualfeasZero(scip,diffy_i[i]));
+                }
             }
         }
        
@@ -535,7 +545,7 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
             }
         }
     }
-    g_memoscip.nodeInfoMap[nodeNumber].DualSol=g_memoscip.collector.dualsol;
+    g_memoscip.nodeInfoMap[nodeNumber].DualSol=IndexedDualSol;
     g_memoscip.nodeInfoMap[nodeNumber].y_i=newy_i;
     g_memoscip.nodeInfoMap[nodeNumber].redcosts = redcost;
     assert(!redcost.empty());
@@ -569,12 +579,11 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
         char nameprob[50];
         //SCIP_CALL( SCIPwriteLP(scip, "mort.lp") ); 
 
-        snprintf(nameprob, 50, "probing_%lld.lp", nodeNumber);
-        //SCIP_CALL( SCIPwriteTransProblem(scip, nameprob,"lp",FALSE) );
+        SCIP_CALL( SCIPwriteTransProblem(scip, "probling.lp","lp",FALSE) );
         //cout<<"Diving LP solved "<<cutoff<<" "<<lperror<<" "<<SCIPgetLPObjval(scip)<< endl;
         SCIP_LPSOLSTAT st = SCIPgetLPSolstat(scip);
         assert(st==SCIP_LPSOLSTAT_OPTIMAL);
-        assert(SCIPgetLPObjval(scip)<1e-3);
+        assert(SCIPgetLPObjval(scip)<1e-2);
         SCIP_CALL( SCIPendProbing(scip));
     }
     

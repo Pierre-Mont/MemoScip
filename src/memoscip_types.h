@@ -42,6 +42,7 @@ struct NodeInfo {
 
     SCIP_Longint parent = 0;
     std::vector<SCIP_Real> DualSol;
+
     std::vector<SCIP_Real> y_i;
 
     std::vector<std::pair<SCIP_Longint, SCIP_Real>> NodeConsistency;
@@ -62,6 +63,7 @@ struct NodeInfo {
 /** Shared solver / learning state (single instance, see g_memoscip). */
 struct MemoSCIPContext {
     int counter = 0;
+    int nbctr = 0;
     int nbAddedctr = 0;
     int nOriginalVar = 0;
     std::unordered_map<SCIP_Longint, NodeInfo> nodeInfoMap;

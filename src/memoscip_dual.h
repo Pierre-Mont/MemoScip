@@ -17,4 +17,8 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
     SCIP* scip,
     SCIP_Longint nodeNumber);
 
+SCIP_RETCODE gatherFarkasCertificate(
+    SCIP* scip,
+    SCIP_Longint nodeNumber);
+
 #endif

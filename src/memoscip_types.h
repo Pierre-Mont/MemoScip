@@ -28,7 +28,6 @@ struct NodeInfo {
     bool visited = false;
     std::vector<long> children;
     int BranchVar = 0;
-    std::vector<SCIP_Real> redcosts;
     int nvarsparent = 0;
     SCIP_CONS* objcons = nullptr;
     std::string Status = "Unknown";
@@ -43,7 +42,8 @@ struct NodeInfo {
     SCIP_Longint parent = 0;
     std::vector<SCIP_Real> DualSol;
 
-    std::vector<SCIP_Real> y_i;
+    std::vector<SCIP_Real> y_i;   // dual solution of constraints x_i<=1. Based on AllVars index. y_i[i] = dual solution of constraint AllVars[i]<=1
+    std::vector<SCIP_Real> redcosts; // redcosts based on AllVars index. redcosts[i] = redcost of AllVars[i]
 
     std::vector<std::pair<SCIP_Longint, SCIP_Real>> NodeConsistency;
 
@@ -67,15 +67,15 @@ struct MemoSCIPContext {
     int nbAddedctr = 0;
     int nOriginalVar = 0;
     std::unordered_map<SCIP_Longint, NodeInfo> nodeInfoMap;
-    std::vector<int> AuxVar;
+    std::vector<int> AuxVar;  //Auxiliary variable index. AuxVar[i] = index of the auxilliary variable in AllVars. 
     std::vector<int> slackVar;
-    std::vector<SCIP_VAR*> AllVars;
-    std::vector<int> CurrentVarIdx;
+    std::vector<SCIP_VAR*> AllVars; //Contains all variables including auxiliary and slack variables. Always same ordering.
+    std::vector<int> CurrentVarIdx; //Transforms SCIP index to AllVars index. CurrentVarIdx[SCIPvarGetIndex(var)-g_memoscip.nOriginalVar] = index in AllVars
     MyQueue CutQueue;
     std::map<int, int> eqvid;
     SolCollector collector;
-    std::vector<SCIP_Real> VarLb;
-    std::vector<SCIP_Real> VarUb;
+    std::vector<SCIP_Real> VarLb; //Index are based on AllVars. VarLb[i] = lower bound of AllVars[i]
+    std::vector<SCIP_Real> VarUb; //Index are based on AllVars. VarUb[i] = upper bound of AllVars[i]
     std::vector<SCIP_VAR*> OrderVar;
     std::string FileExt;
     long long TOP = 1e+9;

@@ -193,7 +193,8 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, double Top,bool sepa, int* nb
       q->queue.pop_back();
       // Créer la contrainte linéaire
       SCIP_CONS* cons = NULL;
-
+      assert(SCIPvarGetName(cut.vars.back())[0]=='s');
+      assert(cut.vals.back()==-1);
       /*SCIP_Real lhs = ceil(cut.lhs);
       SCIP_Real rhs = ceil(cut.rhs);*/
 
@@ -265,12 +266,16 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, double Top,bool sepa, int* nb
       
       // Ajouter la contrainte au problème
       SCIP_CALL( SCIPaddCons(scip, cons) );
+      /*std::cout<<"Adding cut "<<cut.name<<" with rhs "<<rhs<<" and "<<consvars.size()<<" variables"<<std::endl;
+      //Print the constraint 
+         SCIP_CALL( SCIPprintCons(scip, cons, NULL) );
 
+      std::cout<<std::endl<<"Cut added to the problem"<<std::endl;*/
       // Libérer la contrainte (SCIP en garde une référence)
       SCIP_CALL( SCIPreleaseCons(scip, &cons) );
       (*nbctr)++;
    
-      //std::cout<<"Adding cut "<<cut.name<<" with rhs "<<rhs<<" and "<<consvars.size()<<" variables"<<std::endl;
+      
                  
       
    }

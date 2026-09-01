@@ -176,10 +176,6 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
    assert(!SCIPinDive(scip));
    while( !q->queue.empty() )
    {
-      g_memoscip->nbAddedctr++;
-
-      if(g_memoscip->nbAddedctr<100)
-          return SCIP_OKAY;
       //std::cout<<"Adding cut "<<q->queue.back().name<<" with rhs "<<q->queue.back().rhs<<" and "<<q->queue.back().vars.size()<<" variables"<<std::endl;
       QueuedCut cut = std::move(q->queue.back());
       q->queue.pop_back();
@@ -243,12 +239,8 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
 
       g_memoscip->CurrentVarIdx[SCIPvarGetIndex(slack)-g_memoscip->nOriginalVar] = g_memoscip->AllVars.size()-1;
       g_memoscip->AuxVar[SCIPvarGetIndex(slack)-g_memoscip->nOriginalVar] = g_memoscip->AllVars.size()-1;
+      g_memoscip->nbAddedctr++;
       
-      if(g_memoscip->nbAddedctr>2400){
-         SCIP_CALL( SCIPsetIntParam(scip, "display/verblevel", 2) );
-          SCIP_CALL( SCIPsetBoolParam(scip, "display/lpinfo", TRUE) );
-         g_options.verbosity=4;
-      }
       if(sepa){      
          SCIP_CALL( SCIPcreateConsLinear(scip, &cons, cut.name.c_str(),
                                     (int)consvars.size(),
@@ -307,7 +299,7 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
       std::cout<<std::endl<<"Cut added to the problem"<<std::endl; */
 
       
-      
+
       // Libérer la contrainte (SCIP en garde une référence)
       g_memoscip->nodeInfoMap[nodenumber].AddedConstraints.push_back(cons);
 

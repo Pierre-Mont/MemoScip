@@ -2,6 +2,8 @@
 
 #include "scip/scip_lp.h"
 
+#include <cassert>
+#include <iostream>
 void SolCollector::init(SCIP* scip)
 {
     int ncols = SCIPgetNLPCols(scip);
@@ -17,6 +19,7 @@ SCIP_RETCODE SolCollector::collect(SCIP* scip)
     SCIP_CALL(SCIPlpiGetSol(lpi, &objval,
         NULL, dualsol.data(),
         NULL, redcost.data()));
+    
     for (size_t i = 0; i < dualsol.size(); ++i)
     {
         if(SCIPisDualfeasZero(scip, dualsol[i]))

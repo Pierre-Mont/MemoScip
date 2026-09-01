@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+struct MemoSCIPContext;
+
 struct QueuedCut
 {
    std::string name;
@@ -22,7 +24,9 @@ struct MyQueue
 
 void SCIPprintQueuedCuts(SCIP* scip, MyQueue* q);
 void Weaken(std::vector<SCIP_Real>& vals);
-void Saturate(std::vector<SCIP_Real>& vals, double rhs, bool& diffrhs);
+SCIP_Real WeakenSlack(std::vector<SCIP_Real>& vals, const std::vector<SCIP_VAR*>& vars);
+
+void Saturate(std::vector<SCIP_Real>& vals, const std::vector<SCIP_VAR*>& vars, SCIP_Real rhs);
 /** queues a cut to be added in the next separation round */
 SCIP_EXPORT
 SCIP_RETCODE SCIPqueueCut(
@@ -35,6 +39,11 @@ SCIP_RETCODE SCIPqueueCut(
    SCIP_Real rhs,
    MyQueue* q);
 
-SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, double Top, bool sepa, int* nbctr);
+SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, double Top,bool sepa, int* nbctr, SCIP_Longint nodenumber);
 
+void includeMycutsSeparator(SCIP* scip);
+
+
+
+SCIP_Longint Myceil(double val);
 #endif

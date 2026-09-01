@@ -26,6 +26,7 @@ struct NodeInfo {
     SCIP_Real lb = 0.0;
     SCIP_Real ub = 0.0;
     bool visited = false;
+    bool LPsolved=false;
     std::vector<long> children;
     int BranchVar = 0;
     int nvarsparent = 0;
@@ -55,8 +56,8 @@ struct NodeInfo {
 
     std::vector<std::pair<int, std::vector<int>>> BPRemoval;
 
-    std::vector<int> VarLbDebug;
-    std::vector<int> VarUbDebug;
+    std::vector<SCIP_CONS*> AddedConstraints;
+
 };
 
 
@@ -66,9 +67,10 @@ struct MemoSCIPContext {
     int nbctr = 0;
     int nbAddedctr = 0;
     int nOriginalVar = 0;
+    int addedslack=0;
     std::unordered_map<SCIP_Longint, NodeInfo> nodeInfoMap;
     std::vector<int> AuxVar;  //Auxiliary variable index. AuxVar[i] = index of the auxilliary variable in AllVars. 
-    std::vector<int> slackVar;
+    std::vector<SCIP_VAR*> slackVar;
     std::vector<SCIP_VAR*> AllVars; //Contains all variables including auxiliary and slack variables. Always same ordering.
     std::vector<int> CurrentVarIdx; //Transforms SCIP index to AllVars index. CurrentVarIdx[SCIPvarGetIndex(var)-g_memoscip.nOriginalVar] = index in AllVars
     MyQueue CutQueue;
@@ -77,6 +79,8 @@ struct MemoSCIPContext {
     std::vector<SCIP_Real> VarLb; //Index are based on AllVars. VarLb[i] = lower bound of AllVars[i]
     std::vector<SCIP_Real> VarUb; //Index are based on AllVars. VarUb[i] = upper bound of AllVars[i]
     std::vector<SCIP_VAR*> OrderVar;
+    std::vector<SCIP_CONS*> SlackNonNegConss;
+    //std::vector<SCIP_VAR*> Slackvars;
     std::string FileExt;
     long long TOP = 1e+9;
 };

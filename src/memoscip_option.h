@@ -37,6 +37,10 @@ struct MemoSCIPRunOptions {
     int maxCutQueueSize = 0;
 
     bool sepa = false; // True = enable separation, False = disable separation
+
+    bool finish_Learn = false; // Ture = generate constraints until root node,  False = stop when problem is solved
+
+    int Weaken = 0; // 0 = no weakening, 1 = weaken constraints
 };
 
 /** Parse argv. Expects one instance file path (any non-flag argument) and optional flags. */

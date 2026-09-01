@@ -87,6 +87,13 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
         out.sepa = true;
         return true;
     }
+
+
+    if (std::strcmp(s, "-fl") == 0)
+    {
+        out.finish_Learn = true;
+        return true;
+    }
     /* -v... / -l... */
     if (s[1] == 'v' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
     {
@@ -197,6 +204,18 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
             return false;
         return true;
     }
+    if (s[1] == 'w' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
+    {
+        const char* rest = s + 2;
+        if (*rest == '\0')
+        {
+            errMsg = "-w requires an integer value (e.g. -w=1 or -w1)";
+            return false;
+        }
+        if (!parse_int_suffix("-w", rest, out.Weaken, errMsg))
+            return false;
+        return true;
+    }
     
     if (s[1] == 'b' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
     {
@@ -267,7 +286,7 @@ void print_memoscip_usage(const char* programName)
         << "  -kpcg      Treat input as KPCG instance and use internal reader\n"
         << "  -b=N       Branching heuristic (0=custom, 3=relpscost, 4=replay from Instance/branch_replay_sequence.txt)\n"
         << "  -bo=N      Branching order (integer, default 1)\n"
-        << "  -c=N       Custom integer option (default 0)\n"
+        << "  -w=N       Weaken constraints (0 = no weakening, 1 = weaken constraints)\n"
         << "\n"
         << "Examples:\n"
         << "  " << programName << " problem.lp -v=1\n"

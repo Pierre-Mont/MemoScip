@@ -10,6 +10,7 @@ void includeBoundChangedEventHandler(SCIP* scip);
 void includeNodeFocusedEventHandler(SCIP* scip);
 void includeNodeInfeasibleEventHandler(SCIP* scip);
 void includeLPSolveEventHandler(SCIP* scip);
+void includeBestSolFoundEventHandler(SCIP* scip);
 void includeNodeDeleteEventHandler(SCIP* scip);
 void register_memoscip_branchrule(SCIP* scip);
 

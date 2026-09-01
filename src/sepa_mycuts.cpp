@@ -1,12 +1,14 @@
+#include "memoscip_types.h"
+
 #include "sepa_mycuts.h"
 
 #include "scip/cons_linear.h"
 #include "scip/var.h"
+#include "memoscip_option.h"
 
 #include <algorithm>
 #include <cmath>
 #include <iostream>
-
 #define SEPA_NAME              "mycuts"
 #define SEPA_DESC              "separator for queued cuts from events"
 #define SEPA_PRIORITY          1000000
@@ -15,34 +17,82 @@
 #define SEPA_USESSUBSCIP       FALSE
 #define SEPA_DELAY             FALSE
 
+static
+SCIP_DECL_SEPAEXECLP(sepaExeclpMycuts)
+{
+   if( g_memoscip.CutQueue.queue.empty() )
+   {
+      *result = SCIP_DIDNOTFIND;
+      return SCIP_OKAY;
+   }
+   std::cout<<"enter sepaExeclpMycuts with "<<g_memoscip.CutQueue.queue.size()<<" cuts in queue"<<std::endl;
+   SCIP_CALL(AddCutstoProb(scip, &g_memoscip.CutQueue, &g_memoscip, double(g_memoscip.TOP), true, &g_memoscip.nbctr, SCIPnodeGetNumber(SCIPgetCurrentNode(scip))));
+   SCIP_CALL( SCIPflushLP(scip) );
+   *result = SCIP_SEPARATED;
+   return SCIP_OKAY;
+}
+
+void includeMycutsSeparator(SCIP* scip)
+{
+   SCIP_SEPA* sepa = nullptr;
+
+   SCIP_CALL_ABORT(SCIPincludeSepaBasic(
+      scip,
+      &sepa,
+      SEPA_NAME,
+      SEPA_DESC,
+      SEPA_PRIORITY,
+      SEPA_FREQ,
+      SEPA_MAXBOUNDDIST,
+      SEPA_USESSUBSCIP,
+      SEPA_DELAY,
+      sepaExeclpMycuts,
+      nullptr,
+      nullptr));
+}
+
 double roundToDecimals(double val, int decimals) {
     double factor = std::pow(10.0, decimals);
-    return std::ceil(val * factor) / factor;
+    return std::round(val * factor) / factor;
 }
 
 
 SCIP_Longint Myceil(double val){
-      if(val - floor(val) < 1e-7)
+      if(val - floor(val) < 1e-5)
          return (SCIP_Longint)floor(val);
       else
          return (SCIP_Longint)ceil(val);
 }
 
+SCIP_Real WeakenSlack(std::vector<SCIP_Real>& vals, const std::vector<SCIP_VAR*>& vars){
+      SCIP_Real Negterm=0;
+      for(size_t i = 0; i < vals.size(); ++i )
+      {
+         if(SCIPvarGetName(vars[i])[2]=='s' || SCIPvarGetName(vars[i])[0]=='s')
+            vals[i] = std::max(0.0,vals[i]);
+         if(vals[i]<0)
+            Negterm+=vals[i];
+      }
+      assert(vals[vals.size()-1]!=-1);
+      return Negterm;
+}
+
+
 void Weaken(std::vector<SCIP_Real>& vals){
-      for(size_t i = 0; i < vals.size()-1; ++i )
+      for(size_t i = 0; i < vals.size(); ++i )
       {
          vals[i] = std::max(0.0,vals[i]);
       }
-      assert(vals[vals.size()-1]==-1);
+      assert(vals[vals.size()-1]!=-1);
 }
 
-void Saturate(std::vector<SCIP_Real>& vals, const std::vector<SCIP_VAR*>& vars, double rhs){
-      for(size_t i = 0; i < vals.size()-1; ++i )
+void Saturate(std::vector<SCIP_Real>& vals, const std::vector<SCIP_VAR*>& vars, SCIP_Real rhs){
+      for(size_t i = 0; i < vals.size(); ++i )
       {
-         if(SCIPvarGetName(vars[i])[2]!='s')
+         if(SCIPvarGetName(vars[i])[2]!='s' && SCIPvarGetName(vars[i])[0]!='s')
             vals[i] = std::min(vals[i],rhs);
       }
-      assert(vals[vals.size()-1]==-1);
+      assert(vals[vals.size()-1]!=-1);
 }
 
 /** queues a cut to be added in the next separation round */
@@ -64,9 +114,7 @@ SCIP_RETCODE SCIPqueueCut(
    cut.vals.assign(vals, vals + nvars);
    cut.lhs = lhs;
    cut.rhs = rhs;
-   
    q->queue.push_back(cut);
-   
    return SCIP_OKAY;
 }
 
@@ -121,102 +169,85 @@ void SCIPprintQueuedCuts(
 }
 
 
-/*
 
-SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, double Top)
+SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, double Top,bool sepa, int* nbctr, SCIP_Longint nodenumber)
 {
    (void)Top;
-   
+   assert(!SCIPinDive(scip));
    while( !q->queue.empty() )
    {
+      g_memoscip->nbAddedctr++;
+
+      if(g_memoscip->nbAddedctr<100)
+          return SCIP_OKAY;
       //std::cout<<"Adding cut "<<q->queue.back().name<<" with rhs "<<q->queue.back().rhs<<" and "<<q->queue.back().vars.size()<<" variables"<<std::endl;
       QueuedCut cut = std::move(q->queue.back());
       q->queue.pop_back();
-   // Build and add a row directly to the LP (lighter than creating SCIP_CONS).
-   SCIP_ROW* row = NULL;
-
-      SCIP_Real lhs = ceil(cut.lhs);
-      SCIP_Real rhs = ceil(cut.rhs);
-les variables
-
-      Weaken(cut.vals);
-      //Saturate(cut.vals, roundToDecimals(cut.lhs, 5));
-      Saturate(cut.vals, lhs);
-
-      std::vector<SCIP_VAR*> consvars;
-      std::vector<SCIP_Real> consvals;
-      consvars.reserve(cut.vars.size());
-      consvals.reserve(cut.vals.size());
-
-      for( size_t i = 0; i < cut.vars.size(); ++i )
-      {
-         SCIP_Real coef = ceil(cut.vals[i]);
-         if( SCIPisZero(scip, coef) )
-            continue;
-         consvars.push_back(cut.vars[i]);
-         consvals.push_back(coef);
-      }
-
-      SCIP_CALL( SCIPcreateEmptyRowUnspec(scip, &row, cut.name.c_str(),
-                                          lhs, rhs,
-                                          FALSE,  // local
-                                          FALSE,  // modifiable
-                                          FALSE) ); // removable
-
-      SCIP_CALL( SCIPcacheRowExtensions(scip, row) );
-      for( size_t i = 0; i < consvars.size(); ++i )
-      {
-         SCIP_CALL( SCIPaddVarToRow(scip, row, consvars[i], consvals[i]) );
-      }
-      SCIP_CALL( SCIPflushRowExtensions(scip, row) );
-
-      SCIP_Bool infeasible = FALSE;
-      SCIP_CALL( SCIPaddRow(scip, row, TRUE, &infeasible) );
-      SCIP_CALL( SCIPreleaseRow(scip, &row) );   
-   }
-   
-   return SCIP_OKAY;
-}
-
-*/
-
-
-
-SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, double Top,bool sepa, int* nbctr)
-{
-   (void)Top;
-   
-   while( !q->queue.empty() )
-   {
-      //std::cout<<"Adding cut "<<q->queue.back().name<<" with rhs "<<q->queue.back().rhs<<" and "<<q->queue.back().vars.size()<<" variables"<<std::endl;
-      QueuedCut cut = std::move(q->queue.back());
-      q->queue.pop_back();
+      
       // Créer la contrainte linéaire
       SCIP_CONS* cons = NULL;
-      assert(SCIPvarGetName(cut.vars.back())[0]=='s');
-      assert(cut.vals.back()==-1);
+      //std::cout << "Adding cut " << cut.name << " with rhs " << cut.rhs << " and " << cut.vars.size() << " variables" <<cut.vals.size() <<std::endl;
+      //std::cout<< " d "<< cut.vals.back() <<std::endl;
+      assert(!cut.vars.empty());
+      //std::cout<<SCIPvarGetName(cut.vars.back())<<std::endl;
+      //assert(SCIPvarGetName(cut.vars.back())[0]=='s');
+      //assert(cut.vals.back()!=-1);
       /*SCIP_Real lhs = ceil(cut.lhs);
       SCIP_Real rhs = ceil(cut.rhs);*/
 
-      SCIP_Real rhs = roundToDecimals(cut.rhs, 5);
+      SCIP_Real rhs = roundToDecimals(cut.rhs, 9);
       // Ajouter les variables
-
-      Weaken(cut.vals);
-      Saturate(cut.vals, cut.vars, rhs);
-      //Saturate(cut.vals, lhs);
 
       std::vector<SCIP_VAR*> consvars;
       std::vector<SCIP_Real> consvals;
-      consvars.reserve(cut.vars.size());
-      consvals.reserve(cut.vals.size());
-
+      consvars.reserve(cut.vars.size()+1);
+      consvals.reserve(cut.vals.size()+1);
+      SCIP_Real Negterm =0;
+      if(g_options.Weaken==0)
+         Negterm=WeakenSlack(cut.vals,cut.vars);
+      else
+         Weaken(cut.vals);
+      
+      Saturate(cut.vals, cut.vars, rhs-Negterm);
       for( size_t i = 0; i < cut.vars.size(); ++i )
       {
-         SCIP_Real coef = roundToDecimals(cut.vals[i] , 5);
+         SCIP_Real coef = roundToDecimals(cut.vals[i] , 9);
          if( SCIPisZero(scip, coef) )
             continue;
          consvars.push_back(cut.vars[i]);
          consvals.push_back(coef);
+         assert(fabs(coef)<10000);
+      }
+
+      if(consvars.empty())
+         continue;
+      //SCIP_VAR* slack = g_memoscip->slackVar[0];
+      //g_memoscip->slackVar.erase(g_memoscip->slackVar.begin());
+      SCIP_VAR* slack=nullptr;
+      char slackname[50];
+      snprintf(slackname, 50, "sc_%d", g_memoscip->nbAddedctr);
+      SCIP_CALL( SCIPcreateVarBasic(scip, &slack, slackname, 0.0, SCIPinfinity(scip),0.0, SCIP_VARTYPE_CONTINUOUS) );
+      SCIP_CALL(SCIPvarSetRemovable(slack,FALSE));
+      SCIP_CALL(SCIPvarSetInitial(slack,TRUE));
+
+      //SCIP_CALL( SCIPaddPricedVar(scip, slack, 100) );
+      SCIP_CALL( SCIPaddVar(scip, slack) );
+      consvars.push_back(slack);
+      consvals.push_back(-1.0);
+      g_memoscip->AllVars.push_back(slack);
+      g_memoscip->VarUb.push_back(SCIPinfinity(scip));
+      g_memoscip->VarLb.push_back(0);
+
+      g_memoscip->CurrentVarIdx.resize(SCIPvarGetIndex(slack)+1-g_memoscip->nOriginalVar);
+      g_memoscip->AuxVar.resize(SCIPvarGetIndex(slack)+1-g_memoscip->nOriginalVar);
+
+      g_memoscip->CurrentVarIdx[SCIPvarGetIndex(slack)-g_memoscip->nOriginalVar] = g_memoscip->AllVars.size()-1;
+      g_memoscip->AuxVar[SCIPvarGetIndex(slack)-g_memoscip->nOriginalVar] = g_memoscip->AllVars.size()-1;
+      
+      if(g_memoscip->nbAddedctr>2400){
+         SCIP_CALL( SCIPsetIntParam(scip, "display/verblevel", 2) );
+          SCIP_CALL( SCIPsetBoolParam(scip, "display/lpinfo", TRUE) );
+         g_options.verbosity=4;
       }
       if(sepa){      
          SCIP_CALL( SCIPcreateConsLinear(scip, &cons, cut.name.c_str(),
@@ -229,7 +260,7 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, double Top,bool sepa, int* nb
                                     FALSE,   // separate
                                     FALSE,    // enforce
                                     FALSE,    // check
-                                    TRUE,    // propagate
+                                    FALSE,    // propagate
                                     FALSE,   // local
                                     FALSE,   // modifiable
                                     TRUE,   // dynamic
@@ -253,31 +284,37 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, double Top,bool sepa, int* nb
                                     rhs,
                                     rhs,
                                     TRUE,    // initial
-                                    FALSE,   // separate
+                                    TRUE,   // separate
                                     TRUE,    // enforce
-                                    FALSE,    // check
+                                    TRUE,    // check
                                     TRUE,    // propagate
                                     FALSE,   // local
                                     FALSE,   // modifiable
-                                    TRUE,   // dynamic
-                                    TRUE,   // removable
+                                    FALSE,   // dynamic
+                                    FALSE,   // removable
                                     FALSE) );// stickingatnode
       }
-      
+      //assert(SCIPvarIsInLP(consvars.back()));
       // Ajouter la contrainte au problème
+      //std::cout<<"ADD CONS "<<SCIPconsGetName(cons)<<" with rhs "<<rhs<<" and "<<consvars.size()<<" variables"<<std::endl;
       SCIP_CALL( SCIPaddCons(scip, cons) );
-      /*std::cout<<"Adding cut "<<cut.name<<" with rhs "<<rhs<<" and "<<consvars.size()<<" variables"<<std::endl;
+      /*std::cout<<"SEPA MYCUTS Adding cut "<<cut.name<<" with rhs "<<rhs<<" and "<<consvars.size()<<" variables"<<std::endl;
       //Print the constraint 
          SCIP_CALL( SCIPprintCons(scip, cons, NULL) );
+      std::cout << "active = " << SCIPconsIsActive(cons) << std::endl;
+      std::cout << "deleted = " << SCIPconsIsDeleted(cons) << std::endl; 
+      std::cout << "enabled = " << SCIPconsIsEnabled(cons) << std::endl;
+      std::cout<<std::endl<<"Cut added to the problem"<<std::endl; */
 
-      std::cout<<std::endl<<"Cut added to the problem"<<std::endl;*/
+      
+      
       // Libérer la contrainte (SCIP en garde une référence)
+      g_memoscip->nodeInfoMap[nodenumber].AddedConstraints.push_back(cons);
+
       SCIP_CALL( SCIPreleaseCons(scip, &cons) );
       (*nbctr)++;
-   
-      
                  
-      
+      SCIP_CALL(SCIPreleaseVar(scip, &slack));
    }
    
    return SCIP_OKAY;

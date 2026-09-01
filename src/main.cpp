@@ -86,7 +86,7 @@ int main(int argc, char** argv)
     // disable heuristics, presolving
     SCIP_CALL(SCIPsetHeuristics(scip, SCIP_PARAMSETTING_OFF, TRUE));
     SCIP_CALL(SCIPsetPresolving(scip, SCIP_PARAMSETTING_OFF, TRUE));
-    SCIP_CALL( SCIPsetIntParam(scip, "presolving/maxrounds", 0) );
+    SCIP_CALL(SCIPsetIntParam(scip, "presolving/maxrounds", 0) );
     //SCIP_CALL(SCIPsetIntParam(scip,"misc/usesymmetry",0));
     SCIP_CALL(SCIPsetBoolParam(scip,"symmetries/enabled",FALSE));
 
@@ -104,6 +104,7 @@ int main(int argc, char** argv)
     SCIP_CALL( SCIPsetBoolParam(scip, "separating/mcf/separateknapsack", FALSE) );
     SCIP_CALL(SCIPsetBoolParam(scip, "constraints/linear/upgrade/knapsack", FALSE));
 
+    //SCIP_CALL(SCIPsetBoolParam(scip, "write/allconss", TRUE));
     // 2. Désactive individuellement CHAQUE séparateur natif de SCIP (freq = -1)
     //    sans passer par SCIPsetSeparating, pour ne pas retoucher maxrounds
     int nsepas = SCIPgetNSepas(scip);
@@ -119,6 +120,9 @@ int main(int argc, char** argv)
     SCIP_CALL( SCIPsetIntParam(scip, "lp/disablecutoff", 1) );
     SCIP_CALL( SCIPsetBoolParam(scip, "lp/alwaysgetduals", TRUE) );
 
+    SCIP_CALL( SCIPsetIntParam(scip, "pricing/maxvars", 10000) );
+    SCIP_CALL( SCIPsetIntParam(scip, "pricing/maxvarsroot", 20000) );
+    SCIP_CALL(SCIPsetBoolParam(scip,"lp/checkfarkas",FALSE));
 
     if(g_options.sepa){
         cout<<"Enabling custom separation"<<endl;
@@ -126,13 +130,14 @@ int main(int argc, char** argv)
         SCIP_CALL( SCIPsetIntParam(scip, "separating/maxrounds", -1) );        // illimité par nœud (comportement par défaut)
         SCIP_CALL( SCIPsetIntParam(scip, "separating/maxroundsroot", -1) );    // illimité à la racine
         SCIP_CALL( SCIPsetIntParam(scip, "separating/poolfreq", 1) );    // at tout les noeuds
+        includeMycutsSeparator(scip);
     }else{
         SCIP_CALL(SCIPsetSeparating(scip, SCIP_PARAMSETTING_OFF, TRUE));
     }
     //SCIP_CALL( SCIPsetIntParam(scip, "separating/cutagelimit", -1) );
 
     //Multi threading disabled
-    SCIP_CALL( SCIPsetIntParam(scip, "lp/threads", 0) );
+    SCIP_CALL( SCIPsetIntParam(scip, "lp/threads", 1) );
     SCIP_CALL( SCIPsetIntParam(scip, "parallel/maxnthreads", 1) );
     SCIP_CALL( SCIPsetIntParam(scip,"parallel/maxnthreads",1));
 
@@ -197,9 +202,16 @@ int main(int argc, char** argv)
     SCIP_CALL( SCIPsetRealParam(scip, "numerics/feastol",     9e-5) );
     SCIP_CALL( SCIPsetRealParam(scip, "numerics/dualfeastol", 9e-5) );
     SCIP_CALL( SCIPsetRealParam(scip, "numerics/epsilon",     1e-6) );
-    //SCIP_CALL( SCIPsetIntParam(scip, "lp/scaling", 0) );
 
-    SCIPsetBoolParam(scip, "misc/scaleobj", FALSE);
+
+    
+    //SCIP_CALL( SCIPsetIntParam(scip, "lp/scaling", 2) );
+    //SCIP_CALL( SCIPsetIntParam(scip, "lp/scaling", 0) );
+    //SCIP_CALL( SCIPsetCharParam(scip, "lp/initalgorithm", 'c') );
+    //SCIP_CALL( SCIPsetCharParam(scip, "lp/resolvealgorithm", 'c') );
+
+    //SCIP_CALL( SCIPsetIntParam(scip, "lp/scaling", 2) );
+    SCIP_CALL( SCIPsetBoolParam(scip, "misc/scaleobj", FALSE) );
 
     includeLPSolveEventHandler(scip);
     register_memoscip_branchrule(scip);
@@ -389,8 +401,8 @@ int main(int argc, char** argv)
     }
 
     SCIP_CALL(SCIPsolve(scip));
-    
-    //FinishLearn(scip, 1);
+    if(g_options.finish_Learn)
+        FinishLearn(scip, 1);
 
     if (g_options.output > 0){
         SCIP_CALL(SCIPwriteTransProblem(scip, "end.lp", "lp", FALSE));

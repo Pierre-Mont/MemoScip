@@ -20,5 +20,7 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
 SCIP_RETCODE gatherFarkasCertificate(
     SCIP* scip,
     SCIP_Longint nodeNumber);
-
+SCIP_RETCODE getDualProofFromPseudoObjCutoff(
+    SCIP* scip,
+    SCIP_Longint nodeNumber, SCIP_Longint parentNumber, int decVar);
 #endif

@@ -34,13 +34,14 @@ struct NodeInfo {
     std::string Status = "Unknown";
     bool LbgUb = false;
     
+    std::vector<int> Var1;
     std::pair<std::vector<SCIP_Real>, SCIP_Real> DualProofCoef;
     std::vector<int> DualProofInds;
 
     std::pair<std::vector<SCIP_Real>, SCIP_Real> FirstDualProofCoef;
     std::vector<int> FirstDualProofInds;
 
-    SCIP_Longint parent = 0;
+    SCIP_Longint parent = -1;
     std::vector<SCIP_Real> DualSol;
 
     std::vector<SCIP_Real> y_i;   // dual solution of constraints x_i<=1. Based on AllVars index. y_i[i] = dual solution of constraint AllVars[i]<=1

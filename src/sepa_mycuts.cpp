@@ -181,7 +181,7 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
       q->queue.pop_back();
       
       // Créer la contrainte linéaire
-      SCIP_CONS* cons = NULL;
+      
       //std::cout << "Adding cut " << cut.name << " with rhs " << cut.rhs << " and " << cut.vars.size() << " variables" <<cut.vals.size() <<std::endl;
       //std::cout<< " d "<< cut.vals.back() <<std::endl;
       assert(!cut.vars.empty());
@@ -240,25 +240,11 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
       g_memoscip->CurrentVarIdx[SCIPvarGetIndex(slack)-g_memoscip->nOriginalVar] = g_memoscip->AllVars.size()-1;
       g_memoscip->AuxVar[SCIPvarGetIndex(slack)-g_memoscip->nOriginalVar] = g_memoscip->AllVars.size()-1;
       g_memoscip->nbAddedctr++;
-      
-      if(sepa){      
-         SCIP_CALL( SCIPcreateConsLinear(scip, &cons, cut.name.c_str(),
-                                    (int)consvars.size(),
-                                    consvars.empty() ? NULL : consvars.data(),
-                                    consvals.empty() ? NULL : consvals.data(),
-                                    rhs,
-                                    rhs,
-                                    FALSE,    // initial
-                                    FALSE,   // separate
-                                    FALSE,    // enforce
-                                    FALSE,    // check
-                                    FALSE,    // propagate
-                                    FALSE,   // local
-                                    FALSE,   // modifiable
-                                    TRUE,   // dynamic
-                                    TRUE,   // removable
-                                    FALSE) );// stickingatnode
 
+      // slack's column has no valid LP position until flushed; needed before evaluating cut efficacy against the LP solution
+      SCIP_CALL( SCIPflushLP(scip) );
+
+      if(sepa){
          SCIP_ROW* row;
          SCIP_CALL( SCIPcreateEmptyRowUnspec(scip, &row, cut.name.c_str(),
                                              rhs, rhs, FALSE, FALSE, TRUE) ); // removable=TRUE
@@ -266,9 +252,11 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
             SCIP_CALL( SCIPaddVarToRow(scip, row, consvars[i], consvals[i]) );
          }
          SCIP_CALL( SCIPaddPoolCut(scip, row) );
+         //SCIP_Real efficacy = SCIPgetCutEfficacy(scip, nullptr, row);
+         //printf("Cut efficacy: %f\n", efficacy);
          SCIP_CALL( SCIPreleaseRow(scip, &row) );
-
       }else{
+         SCIP_CONS* cons = NULL;
          SCIP_CALL( SCIPcreateConsLinear(scip, &cons, cut.name.c_str(),
                                     (int)consvars.size(),
                                     consvars.empty() ? NULL : consvars.data(),
@@ -285,11 +273,17 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
                                     FALSE,   // dynamic
                                     FALSE,   // removable
                                     FALSE) );// stickingatnode
+         SCIP_CALL( SCIPaddCons(scip, cons) );
+         g_memoscip->nodeInfoMap[nodenumber].AddedConstraints.push_back(cons);
+         SCIP_CALL( SCIPreleaseCons(scip, &cons) );
+
       }
       //assert(SCIPvarIsInLP(consvars.back()));
       // Ajouter la contrainte au problème
       //std::cout<<"ADD CONS "<<SCIPconsGetName(cons)<<" with rhs "<<rhs<<" and "<<consvars.size()<<" variables"<<std::endl;
-      SCIP_CALL( SCIPaddCons(scip, cons) );
+      
+
+
       /*std::cout<<"SEPA MYCUTS Adding cut "<<cut.name<<" with rhs "<<rhs<<" and "<<consvars.size()<<" variables"<<std::endl;
       //Print the constraint 
          SCIP_CALL( SCIPprintCons(scip, cons, NULL) );
@@ -298,12 +292,6 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
       std::cout << "enabled = " << SCIPconsIsEnabled(cons) << std::endl;
       std::cout<<std::endl<<"Cut added to the problem"<<std::endl; */
 
-      
-
-      // Libérer la contrainte (SCIP en garde une référence)
-      g_memoscip->nodeInfoMap[nodenumber].AddedConstraints.push_back(cons);
-
-      SCIP_CALL( SCIPreleaseCons(scip, &cons) );
       (*nbctr)++;
                  
       SCIP_CALL(SCIPreleaseVar(scip, &slack));

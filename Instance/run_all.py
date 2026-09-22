@@ -92,6 +92,8 @@ def main():
     parser.add_argument("--out-dir", default=".", help="Where to write the CSV")
     parser.add_argument("--timeout", type=int, default=3600, help="Per-run timeout in seconds")
     parser.add_argument("--parallel", action="store_true", help="Run in parallel (not implemented in this script) - reserved")
+    parser.add_argument("--inst-start", default=None, help="Name (or substring) of the instance file to start from (inclusive)")
+    parser.add_argument("--inst-stop", default=None, help="Name (or substring) of the instance file to stop at (inclusive)")
 
     # parse_known_args: forward unknown args to the executable (e.g. -l1 -v=2)
     args, unknown = parser.parse_known_args()
@@ -143,7 +145,16 @@ def main():
             pass
 
     # Run instances and append each result immediately
+    started = args.inst_start is None
     for inst in instances:
+        if not started and args.inst_start in inst.name:
+            started = True
+
+        if not started:
+            continue
+
+        stopped = args.inst_stop is not None and args.inst_stop in inst.name
+
         inst = inst.resolve()
         print("Running", inst)
         out_text, rc = run_instance(exe, inst, forward_args, args.timeout)
@@ -170,6 +181,9 @@ def main():
                 os.fsync(f.fileno())
             except Exception:
                 pass
+
+        if stopped:
+            break
 
     print(f"Wrote results to {csv_path}")
 

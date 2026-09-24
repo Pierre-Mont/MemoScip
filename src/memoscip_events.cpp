@@ -275,9 +275,9 @@ SCIP_DECL_EVENTEXEC(eventExecNodeSolved)
             cout<<"lperror "<<lperror<<" cutoff "<<cutoff<<" stat2 "<<stat2<<endl;
             cout<<"LP SOLVED EVENT with status "<<stat2<<" node "<<nodenumber<<endl;
             char nameprobsol[50];
-            snprintf(nameprobsol, 50, "infeasible_%lld.lp", nodenumber);
+            snprintf(nameprobsol, 50, "infeasible%s_%lld.lp", g_options.instancePath.c_str(), nodenumber);
             SCIP_CALL( SCIPwriteTransProblem(scip, nameprobsol,"lp",FALSE) );
-            snprintf(nameprobsol, 50, "infeasiblelp_%lld.lp", nodenumber);
+            snprintf(nameprobsol, 50, "infeasible%s_%lld.lp", g_options.instancePath.c_str(), nodenumber);
             SCIP_CALL( SCIPwriteLP(scip, nameprobsol) );
              assert(1==0);
         }
@@ -857,6 +857,17 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
         //cout<<Myceil(rhs_summed+g_memoscip.nodeInfoMap[parentNumber].lb)<<" "<<SCIPgetPrimalbound(scip)<<endl;
         //assert(SCIPgetPrimalbound(scip) == SCIPinfinity(scip)  || Myceil(rhs_summed+g_memoscip.nodeInfoMap[parentNumber].lb) - SCIPgetPrimalbound(scip) > -1e-9);
 
+        vector<int> Inds;
+        vector<SCIP_Real> Coefs;
+        for (size_t i = 0; i < ResFus.size(); i++)
+        {
+            if(!SCIPisDualfeasZero(scip,ResFus[i])){
+                //cout<<SCIPvarGetName(g_memoscip.AllVars[i])<<" "<<ResFus[i]<<" "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.AuxVar[i]])<<" "<<ResFus[g_memoscip.AuxVar[i]]<<endl;
+                Inds.push_back(i);
+                Coefs.push_back(ResFus[i]);
+                assert( i >= g_memoscip.nodeInfoMap[parentNumber].redcosts.size() || ResFus[i]- g_memoscip.nodeInfoMap[parentNumber].redcosts[i]<1e-3 || g_memoscip.VarUb[i] == 0);
+            }
+        }
         if(rhs_summed>0  && rhs_summed < g_memoscip.TOP){
             char name[100];
 
@@ -919,8 +930,8 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
         assert(abs(g_memoscip.nodeInfoMap[nodenumber].DualProofCoef.second-g_memoscip.nodeInfoMap[nodenumber].lb_increase) < 1e-9);
         assert(NewCoefs.size()<=g_memoscip.CurrentVarIdx.size());
         g_memoscip.nodeInfoMap[nodenumber].DualProofCoef.second=rhs_summed;
-        g_memoscip.nodeInfoMap[nodenumber].DualProofInds=NewInds;
-        g_memoscip.nodeInfoMap[nodenumber].DualProofCoef.first=NewCoefs;
+        g_memoscip.nodeInfoMap[nodenumber].DualProofInds=Inds;
+        g_memoscip.nodeInfoMap[nodenumber].DualProofCoef.first=Coefs;
         assert(g_memoscip.nodeInfoMap[nodenumber].lb_increase<=rhs_summed || !g_memoscip.nodeInfoMap[nodenumber].NodeConsistency.empty());
         g_memoscip.nodeInfoMap[nodenumber].lb_increase=rhs_summed;
         //cout<<" plb "<<g_memoscip.nodeInfoMap[parentNumber].lb<<" lbinc "<<g_memoscip.nodeInfoMap[nodenumber].lb_increase<<" ub "<<SCIPgetPrimalbound(scip)<<" "<<g_memoscip.nodeInfoMap[parentNumber].lb + g_memoscip.nodeInfoMap[nodenumber].lb_increase<<" "<<Myceil(g_memoscip.nodeInfoMap[parentNumber].lb + g_memoscip.nodeInfoMap[nodenumber].lb_increase)<<endl;

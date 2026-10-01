@@ -52,7 +52,7 @@ int main(int argc, char** argv)
     // read problem filepath
     if (g_options.kpcg) {
         std::string rerr;
-        if (!readKPCGInstance(scip, filepath, rerr)) {
+        if (!readKPCGInstance(scip, filepath, g_options.encoding, rerr)) {
             std::cerr << "Error reading KPCG instance: " << rerr << std::endl;
             return 1;
         }
@@ -274,7 +274,7 @@ int main(int argc, char** argv)
     std::cout << "Converted " << converted << " linear constraints to equalities by adding slack vars\n";
     SCIP_VAR** vars = SCIPgetVars(scip);
     vars = SCIPgetVars(scip);
-    bool ok = false;
+    bool ok = true;
     while(!ok){
         ok=true;
         ok = true;
@@ -321,7 +321,7 @@ int main(int argc, char** argv)
             snprintf(sname, sizeof(sname), "%s_0", SCIPvarGetName(v));
             slack = nullptr;
             cout<<"Creating slack variable "<<sname<<" for upper bound constraint of variable "<<SCIPvarGetName(v)<<endl;
-            SCIP_CALL( SCIPcreateVarBasic(scip, &slack, sname, 0.0, 1, 0.0, SCIP_VARTYPE_CONTINUOUS) );
+            SCIP_CALL( SCIPcreateVarBasic(scip, &slack, sname, 0.0, 1, 0.0, SCIP_VARTYPE_BINARY) );
             SCIP_CALL( SCIPaddVar(scip, slack) );
 
             consvars[1] = slack;
@@ -378,12 +378,12 @@ int main(int argc, char** argv)
         v=vars[i];
         objcoefs.push_back(SCIPvarGetObj(v));
         string varname = SCIPvarGetName(v);
-        if (g_options.branchingHeuristic >= 1 && varname.size() >= 2 && ((varname.substr(varname.size() - 2) == "_0" && g_options.branchingOrder==0) || (varname.substr(varname.size() - 2) != "_0" && g_options.branchingOrder==1)))
+        if (g_options.branchingHeuristic >= 1 && varname.size() >= 2 && ((varname.substr(varname.size() - 2) == "_0" && g_options.branchingOrder==1) || (varname.substr(varname.size() - 2) == "_1" && g_options.branchingOrder==0)))
         {
             SCIP_CALL(SCIPchgVarBranchPriority(scip, v, -1000000));
         }
-        if (varname.size() >= 2 && ((varname.substr(varname.size() - 2) == "_0" && g_options.branchingOrder==0) || (varname.substr(varname.size() - 2) != "_0" && g_options.branchingOrder==1)) ) {
-          g_memoscip.OrderVar.push_back((v));
+        if (varname.size() >= 2 && ((varname.substr(varname.size() - 2) == "_0" && g_options.branchingOrder==0) || (varname.substr(varname.size() - 2) == "_1" && g_options.branchingOrder==1)) ) {
+           g_memoscip.OrderVar.push_back((v));
         }
     }
 
@@ -415,6 +415,14 @@ int main(int argc, char** argv)
     cout<<"Dual bound : "<<SCIPgetDualbound(scip)<<endl;
     cout<<"Number of learned cuts : "<<g_memoscip.nbAddedctr<<endl;
     cout<<"Gap : "<<SCIPgetGap(scip)<<endl;
+    cout<<"Time in AnalyseDualSol : "<<g_memoscip.AnalyseDualSolTime.count()<<" seconds"<<endl;
+    cout<<"Time in eventExecNodeDelete : "<<g_memoscip.NodeDeleteTime.count()<<" seconds"<<endl;
+    cout<<"Time in eventExecNodeSolved : "<<g_memoscip.NodeSolvedTime.count()<<" seconds"<<endl;
+    cout<<"Time in eventExecLPSolved : "<<g_memoscip.LPSolvedTime.count()<<" seconds"<<endl;
+    cout<<"Time in eventExecNodeFocused : "<<g_memoscip.NodeFocusedTime.count()<<" seconds"<<endl;
+    cout<<"Time in eventExecBoundChanged : "<<g_memoscip.BoundChangedTime.count()<<" seconds"<<endl;
+    cout<<"Time in gatherLPInfeasibilityCertificate : "<<g_memoscip.GatherLPInfeasibilityCertificateTime.count()<<" seconds"<<endl;
+    cout<<"Time in getDualProofFromPseudoObjCutoff : "<<g_memoscip.GetDualProofFromPseudoObjCutoffTime.count()<<" seconds"<<endl;
     if(g_options.verbosity > 2){
         SCIP_SOL* sol = SCIPgetBestSol(scip);
         if (sol != nullptr)

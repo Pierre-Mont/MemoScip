@@ -82,6 +82,10 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
         out.kpcg = true;
         return true;
     }
+    if (std::strncmp(s, "-encoding", 9) == 0)
+    {
+        return parse_int_suffix("-encoding", s + 9, out.encoding, errMsg);
+    }
     if (std::strcmp(s, "-sep") == 0)
     {
         out.sepa = true;
@@ -284,6 +288,7 @@ void print_memoscip_usage(const char* programName)
         << "  -s=N       Number of slack variables\n"
         << "  -p         Profiling / reserved for future use\n"
         << "  -kpcg      Treat input as KPCG instance and use internal reader\n"
+        << "  -encoding=<n>  KPCG encoding: 0 = direct, nonzero = tuple\n"
         << "  -b=N       Branching heuristic (0=custom, 3=relpscost, 4=replay from Instance/branch_replay_sequence.txt)\n"
         << "  -bo=N      Branching order (integer, default 1)\n"
         << "  -w=N       Weaken constraints (0 = no weakening, 1 = weaken constraints)\n"

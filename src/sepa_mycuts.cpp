@@ -212,7 +212,7 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
             continue;
          consvars.push_back(cut.vars[i]);
          consvals.push_back(coef);
-         assert(fabs(coef)<10000);
+         assert(fabs(coef)<1000000);
       }
 
       if(consvars.empty())
@@ -236,7 +236,7 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
 
       g_memoscip->CurrentVarIdx.resize(SCIPvarGetIndex(slack)+1-g_memoscip->nOriginalVar);
       g_memoscip->AuxVar.resize(SCIPvarGetIndex(slack)+1-g_memoscip->nOriginalVar);
-
+      g_memoscip->TupleAuxVar.resize(SCIPvarGetIndex(slack)+1-g_memoscip->nOriginalVar);
       g_memoscip->CurrentVarIdx[SCIPvarGetIndex(slack)-g_memoscip->nOriginalVar] = g_memoscip->AllVars.size()-1;
       g_memoscip->AuxVar[SCIPvarGetIndex(slack)-g_memoscip->nOriginalVar] = g_memoscip->AllVars.size()-1;
       g_memoscip->nbAddedctr++;

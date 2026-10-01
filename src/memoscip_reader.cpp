@@ -111,7 +111,7 @@ std::unique_ptr<std::istream> open_instance_file(const std::string& path, std::s
 }
 
 
-bool readKPCGInstance(SCIP* scip, const std::string& path, std::string& err)
+bool readKPCGInstance(SCIP* scip, const std::string& path, int encoding, std::string& err)
 {
     if (scip == nullptr) {
         err = "SCIP pointer is null";
@@ -221,12 +221,12 @@ bool readKPCGInstance(SCIP* scip, const std::string& path, std::string& err)
         SCIP_VAR* v0 = nullptr;
         SCIP_VAR* v1 = nullptr;
 
-        ret = SCIPcreateVarBasic(scip, &v0, name0, 0.0, 1.0, (SCIP_Real)profit, SCIP_VARTYPE_BINARY);
+        ret = SCIPcreateVarBasic(scip, &v0, name0, 0.0, 1.0, (SCIP_Real)profit, SCIP_VARTYPE_INTEGER);
         if (ret != SCIP_OKAY) { err = "SCIP error creating var"; return false; }
         ret = SCIPaddVar(scip, v0);
         if (ret != SCIP_OKAY) { err = "SCIP error adding var"; return false; }
 
-        ret = SCIPcreateVarBasic(scip, &v1, name1, 0.0, 1.0, 0.0, SCIP_VARTYPE_BINARY);
+        ret = SCIPcreateVarBasic(scip, &v1, name1, 0.0, 1.0, 0.0, SCIP_VARTYPE_INTEGER);
         if (ret != SCIP_OKAY) { err = "SCIP error creating var"; return false; }
         ret = SCIPaddVar(scip, v1);
         if (ret != SCIP_OKAY) { err = "SCIP error adding var"; return false; }
@@ -262,23 +262,84 @@ bool readKPCGInstance(SCIP* scip, const std::string& path, std::string& err)
         }
     }
 
-    // conflict edges: x1_i + x1_j <= 1
+    // Conflict edges use either the original direct formulation or a tuple formulation.
     for (size_t k = 0; k < edges.size(); ++k) {
         int i = edges[k].first;
         int j = edges[k].second;
-        SCIP_VAR* consvars[2] = { var1[i], var1[j] };
-        SCIP_Real coefs[2] = { 1.0, 1.0 };
-        char cname[128];
-        snprintf(cname, sizeof(cname), "conflict_%zu", k);
-        SCIP_CONS* cons = nullptr;
-        SCIP_RETCODE ret = SCIPcreateConsBasicLinear(scip, &cons, cname, 2, consvars, coefs, -SCIPinfinity(scip), 1.0);
-        if (ret != SCIP_OKAY) { err = "SCIP error creating conflict constraint"; return false; }
-        ret = SCIPaddCons(scip, cons);
-        if (ret != SCIP_OKAY) { err = "SCIP error adding conflict constraint"; return false; }
-        {
+        if (i < 0 || i >= n_items || j < 0 || j >= n_items || i == j) {
+            err = "Conflict edge contains an invalid item index";
+            return false;
+        }
+
+        if (encoding == 0) {
+            SCIP_VAR* consvars[2] = { var1[i], var1[j] };
+            SCIP_Real coefs[2] = { 1.0, 1.0 };
+            char cname[128];
+            snprintf(cname, sizeof(cname), "conflict_%zu", k);
+            SCIP_CONS* cons = nullptr;
+            SCIP_RETCODE ret = SCIPcreateConsBasicLinear(scip, &cons, cname, 2, consvars, coefs, -SCIPinfinity(scip), 1.0);
+            if (ret != SCIP_OKAY) { err = "SCIP error creating conflict constraint"; return false; }
+            ret = SCIPaddCons(scip, cons);
+            if (ret != SCIP_OKAY) { err = "SCIP error adding conflict constraint"; return false; }
             SCIP_RETCODE r2 = SCIPreleaseCons(scip, &cons);
             (void)r2;
+            continue;
         }
+
+        SCIP_VAR* tuples[4] = { nullptr, nullptr, nullptr, nullptr };
+        const char* tuple_labels[4] = { "00", "11", "10", "01" };
+        const SCIP_Real tuple_objs[4] = { 0.0, 0.0, 0.0, 0.0 };
+        for (int tuple = 0; tuple < 4; ++tuple) {
+            char name[128];
+            snprintf(name, sizeof(name), "x%d_%s_%d", i, tuple_labels[tuple], j);
+
+            SCIP_VAR* tuple_var = nullptr;
+            SCIP_RETCODE ret = SCIPcreateVarBasic(scip, &tuple_var, name, 0.0, 1.0,tuple_objs[tuple], SCIP_VARTYPE_INTEGER);
+            if (ret != SCIP_OKAY) { err = "SCIP error creating tuple variable"; return false; }
+            ret = SCIPaddVar(scip, tuple_var);
+            if(tuple == 1) {
+                SCIP_CALL( SCIPchgVarUb(scip, tuple_var, 0) );
+            }
+            if (ret != SCIP_OKAY) { err = "SCIP error adding tuple variable"; return false; }
+            tuples[tuple] = tuple_var;
+            ret = SCIPreleaseVar(scip, &tuple_var);
+            if (ret != SCIP_OKAY) { err = "SCIP error releasing tuple variable"; return false; }
+            
+        }
+
+        SCIP_Real marginal_coefs[3] = { 1.0, 1.0, -1.0 };
+        SCIP_VAR* marginal_vars[4][3] = {
+            { tuples[0], tuples[3], var0[i] },
+            { tuples[2], tuples[1], var1[i] },
+            { tuples[0], tuples[2], var0[j] },
+            { tuples[3], tuples[1], var1[j] }
+        };
+        const char* marginal_labels[4] = { "i0", "i1", "j0", "j1" };
+        for (int marginal = 0; marginal < 4; ++marginal) {
+            char cname[128];
+            snprintf(cname, sizeof(cname), "tuple_%zu_%s", k, marginal_labels[marginal]);
+            SCIP_CONS* cons = nullptr;
+            SCIP_RETCODE ret = SCIPcreateConsBasicLinear(scip, &cons, cname, 3,
+                                                         marginal_vars[marginal], marginal_coefs,
+                                                         0.0, 0.0);
+            if (ret != SCIP_OKAY) { err = "SCIP error creating tuple marginal constraint"; return false; }
+            ret = SCIPaddCons(scip, cons);
+            if (ret != SCIP_OKAY) { err = "SCIP error adding tuple marginal constraint"; return false; }
+            ret = SCIPreleaseCons(scip, &cons);
+            if (ret != SCIP_OKAY) { err = "SCIP error releasing tuple marginal constraint"; return false; }
+        }
+
+        SCIP_Real tuple_sum_coefs[4] = { 1.0, 1.0, 1.0, 1.0 };
+        char cname[128];
+        snprintf(cname, sizeof(cname), "tuple_%zu_sum", k);
+        SCIP_CONS* cons = nullptr;
+        SCIP_RETCODE ret = SCIPcreateConsBasicLinear(scip, &cons, cname, 4, tuples, tuple_sum_coefs, 1.0, 1.0);
+        if (ret != SCIP_OKAY) { err = "SCIP error creating tuple sum constraint"; return false; }
+        ret = SCIPaddCons(scip, cons);
+        if (ret != SCIP_OKAY) { err = "SCIP error adding tuple sum constraint"; return false; }
+        ret = SCIPreleaseCons(scip, &cons);
+        if (ret != SCIP_OKAY) { err = "SCIP error releasing tuple sum constraint"; return false; }
+
     }
 
     // domain constraints: x0 + x1 = 1

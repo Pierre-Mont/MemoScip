@@ -69,15 +69,12 @@ def is_gap_zero(s, tol=1e-12):
 
 
 def extract_bppc_i_j(instance_name: str):
-    # Keep only BPPC_i instances with i <= 7, and extract j from suffix _0.j.xz
     name = Path(str(instance_name).strip()).name
     mi = re.search(r'BPPC_(\d+)', name)
     mj = re.search(r'_0\.(\d+)\.xz$', name)
     if not mi or not mj:
         return None, None
     i_val = int(mi.group(1))
-    if i_val > 7:
-        return None, None
     j_val = int(mj.group(1))
     return i_val, j_val
 
@@ -293,7 +290,7 @@ def main():
 
         plt.xlabel('Density (0.j)')
         plt.ylabel('Average developed nodes')
-        plt.title('BPPC (i<=7): average developed nodes by density')
+        plt.title('BPPC : average developed nodes by density')
         plt.grid(True)
         plt.legend()
         plt.tight_layout()

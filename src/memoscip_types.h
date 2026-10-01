@@ -4,6 +4,7 @@
 #include "scip/scip.h"
 #include "sepa_mycuts.h"
 
+#include <chrono>
 #include <cmath>
 #include <map>
 #include <string>
@@ -71,6 +72,7 @@ struct MemoSCIPContext {
     int addedslack=0;
     std::unordered_map<SCIP_Longint, NodeInfo> nodeInfoMap;
     std::vector<int> AuxVar;  //Auxiliary variable index. AuxVar[i] = index of the auxilliary variable in AllVars. 
+    std::vector<std::vector<int>> TupleAuxVar; //Auxilliary variables indices for tuple variables (Encoding=1)
     std::vector<SCIP_VAR*> slackVar;
     std::vector<SCIP_VAR*> AllVars; //Contains all variables including auxiliary and slack variables. Always same ordering.
     std::vector<int> CurrentVarIdx; //Transforms SCIP index to AllVars index. CurrentVarIdx[SCIPvarGetIndex(var)-g_memoscip.nOriginalVar] = index in AllVars
@@ -84,6 +86,14 @@ struct MemoSCIPContext {
     //std::vector<SCIP_VAR*> Slackvars;
     std::string FileExt;
     long long TOP = 1e+9;
+    std::chrono::duration<double> AnalyseDualSolTime{0.0}; // cumulated time spent in AnalyseDualSol
+    std::chrono::duration<double> NodeDeleteTime{0.0}; // cumulated time spent in eventExecNodeDelete
+    std::chrono::duration<double> NodeSolvedTime{0.0}; // cumulated time spent in eventExecNodeSolved
+    std::chrono::duration<double> LPSolvedTime{0.0}; // cumulated time spent in eventExecLPSolved
+    std::chrono::duration<double> NodeFocusedTime{0.0}; // cumulated time spent in eventExecNodeFocused
+    std::chrono::duration<double> BoundChangedTime{0.0}; // cumulated time spent in eventExecBoundChanged
+    std::chrono::duration<double> GatherLPInfeasibilityCertificateTime{0.0}; // cumulated time spent in gatherLPInfeasibilityCertificate
+    std::chrono::duration<double> GetDualProofFromPseudoObjCutoffTime{0.0}; // cumulated time spent in getDualProofFromPseudoObjCutoff
 };
 
 /** Single shared instance; inline (C++17) so no separate .cpp definition is required. */

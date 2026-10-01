@@ -25,6 +25,8 @@ struct MemoSCIPRunOptions {
     float minInc = 1.0f;
     /** Treat the input instance as KPCG format and use internal reader. */
     bool kpcg = false;
+    /** KPCG formulation: 0 = direct conflicts, nonzero = tuple encoding. */
+    int encoding = 0;
 
     int nbslack = 1000; // Number of slack variables 
     /** Maximum time limit in seconds (0 = no limit). */

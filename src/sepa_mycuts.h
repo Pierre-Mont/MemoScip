@@ -39,7 +39,7 @@ SCIP_RETCODE SCIPqueueCut(
    SCIP_Real rhs,
    MyQueue* q);
 
-SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, double Top,bool sepa, int* nbctr, SCIP_Longint nodenumber);
+SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, double Top,bool sepa, int* nbctr, SCIP_Longint nodenumber, SCIP_SEPA* sepaname);
 
 void includeMycutsSeparator(SCIP* scip);
 

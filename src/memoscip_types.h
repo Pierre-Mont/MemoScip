@@ -85,6 +85,9 @@ struct MemoSCIPContext {
     std::vector<SCIP_CONS*> SlackNonNegConss;
     //std::vector<SCIP_VAR*> Slackvars;
     std::string FileExt;
+    std::vector<SCIP_CONS*> Unconstructed_cons; //Constraint added to the problem but not yet added in the LP
+
+
     long long TOP = 1e+9;
     std::chrono::duration<double> AnalyseDualSolTime{0.0}; // cumulated time spent in AnalyseDualSol
     std::chrono::duration<double> NodeDeleteTime{0.0}; // cumulated time spent in eventExecNodeDelete

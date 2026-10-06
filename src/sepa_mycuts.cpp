@@ -25,8 +25,9 @@ SCIP_DECL_SEPAEXECLP(sepaExeclpMycuts)
       *result = SCIP_DIDNOTFIND;
       return SCIP_OKAY;
    }
-   std::cout<<"enter sepaExeclpMycuts with "<<g_memoscip.CutQueue.queue.size()<<" cuts in queue"<<std::endl;
-   SCIP_CALL(AddCutstoProb(scip, &g_memoscip.CutQueue, &g_memoscip, double(g_memoscip.TOP), true, &g_memoscip.nbctr, SCIPnodeGetNumber(SCIPgetCurrentNode(scip))));
+   if(g_options.verbosity > 1)
+      std::cout<<"enter sepaExeclpMycuts with "<<g_memoscip.CutQueue.queue.size()<<" cuts in queue"<<std::endl;
+   SCIP_CALL(AddCutstoProb(scip, &g_memoscip.CutQueue, &g_memoscip, double(g_memoscip.TOP), true, &g_memoscip.nbctr, SCIPnodeGetNumber(SCIPgetCurrentNode(scip)),sepa));
    SCIP_CALL( SCIPflushLP(scip) );
    *result = SCIP_SEPARATED;
    return SCIP_OKAY;
@@ -49,6 +50,8 @@ void includeMycutsSeparator(SCIP* scip)
       sepaExeclpMycuts,
       nullptr,
       nullptr));
+      SCIP_CALL_ABORT(SCIPsetIntParam(scip,"separating/" SEPA_NAME "/expbackoff",1));
+
 }
 
 double roundToDecimals(double val, int decimals) {
@@ -170,7 +173,7 @@ void SCIPprintQueuedCuts(
 
 
 
-SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, double Top,bool sepa, int* nbctr, SCIP_Longint nodenumber)
+SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, double Top,bool sepa, int* nbctr, SCIP_Longint nodenumber, SCIP_SEPA* sepaname)
 {
    (void)Top;
    assert(!SCIPinDive(scip));
@@ -246,12 +249,18 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
 
       if(sepa){
          SCIP_ROW* row;
-         SCIP_CALL( SCIPcreateEmptyRowUnspec(scip, &row, cut.name.c_str(),
-                                             rhs, rhs, FALSE, FALSE, TRUE) ); // removable=TRUE
+         SCIP_CALL( SCIPcreateEmptyRowSepa(scip, &row, sepaname, cut.name.c_str(),
+                                        rhs,rhs,
+                                        FALSE,   // local
+                                        FALSE,   // modifiable
+                                        TRUE) ); // removable
          for (size_t i = 0; i < consvars.size(); ++i) {
             SCIP_CALL( SCIPaddVarToRow(scip, row, consvars[i], consvals[i]) );
          }
-         SCIP_CALL( SCIPaddPoolCut(scip, row) );
+            SCIP_Bool infeasible = FALSE;
+            SCIP_CALL( SCIPaddPoolCut(scip, row) );   // persistant, réinjecté quand violé
+
+            SCIP_CALL( SCIPaddRow(scip, row, FALSE /*forcecut*/, &infeasible) );
          //SCIP_Real efficacy = SCIPgetCutEfficacy(scip, nullptr, row);
          //printf("Cut efficacy: %f\n", efficacy);
          SCIP_CALL( SCIPreleaseRow(scip, &row) );
@@ -275,6 +284,7 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
                                     FALSE) );// stickingatnode
          SCIP_CALL( SCIPaddCons(scip, cons) );
          g_memoscip->nodeInfoMap[nodenumber].AddedConstraints.push_back(cons);
+         g_memoscip->Unconstructed_cons.push_back(cons);
          SCIP_CALL( SCIPreleaseCons(scip, &cons) );
 
       }

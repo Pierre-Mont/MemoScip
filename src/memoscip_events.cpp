@@ -244,9 +244,9 @@ SCIP_DECL_EVENTEXEC(eventExecNodeSolved)
         }
         SCIP_CALL( SCIPstartDive(scip) );
         // Must keep in case problem decided infeasible (by bound propagationf for exampel) before LP is constructed and solved.
-        if(!g_memoscip.nodeInfoMap[nodenumber].LPsolved){
-            for(size_t i =0; i <g_memoscip.nodeInfoMap[nodenumber].AddedConstraints.size(); i++){
-                SCIP_CONS* cons = g_memoscip.nodeInfoMap[nodenumber].AddedConstraints[i];
+        if(!g_memoscip.Unconstructed_cons.empty()){
+            for(size_t i =0; i <g_memoscip.Unconstructed_cons.size(); i++){
+                SCIP_CONS* cons = g_memoscip.Unconstructed_cons[i];
                 SCIP_ROW* row = SCIPgetRowLinear(scip, cons);
                 SCIP_CALL( SCIPdelConsLocal(scip, cons) );
                 if(row!=nullptr){
@@ -408,11 +408,12 @@ SCIP_DECL_EVENTEXEC(eventExecLPSolved)
     
     SCIP_Longint nodenumber= SCIPnodeGetNumber(node);
     g_memoscip.nodeInfoMap[nodenumber].LPsolved=true;
+    g_memoscip.Unconstructed_cons.clear();
     //SCIP_Longint parentNumber = g_memoscip.nodeInfoMap[nodenumber].parent;
     if(g_options.verbosity > 1)
         cout<<"-----LP SOLVED EVENT ------- "<<nodenumber<< " depth "<<SCIPgetDepth(scip)<<" parent "<<g_memoscip.nodeInfoMap[nodenumber].parent<<endl;
     SCIP_LPSOLSTAT lpsolstat = SCIPgetLPSolstat(scip);
-    if(g_options.verbosity >= 2){
+    if(g_options.verbosity >= 1){
         cout << "LP Solved - Status: ";
         switch(lpsolstat) {
             case SCIP_LPSOLSTAT_OPTIMAL:
@@ -568,9 +569,9 @@ SCIP_DECL_EVENTEXEC(eventExecNodeFocused)
         }
     }
     int qsize=g_memoscip.CutQueue.queue.size();
-    if(qsize>g_options.maxCutQueueSize){
+    if(qsize>g_options.maxCutQueueSize && !g_options.sepa){
         //cout<<"add "<<qsize<<" cuts to problem at node "<<nodenumber<<" with parent "<<parentNumber<<" and depth "<<SCIPgetDepth(scip)<<" and "<<g_memoscip.nbAddedctr<<" constraints added"<<endl;
-        SCIP_CALL(AddCutstoProb(scip,&g_memoscip.CutQueue,&g_memoscip,double(g_memoscip.TOP),g_options.sepa,&g_memoscip.nbctr,nodenumber)); 
+        SCIP_CALL(AddCutstoProb(scip,&g_memoscip.CutQueue,&g_memoscip,double(g_memoscip.TOP),g_options.sepa,&g_memoscip.nbctr,nodenumber,nullptr)); 
         //SCIP_CALL( SCIPwriteLP(scip, "queue.lp") );    
         //SCIP_CALL( SCIPflushLP(scip) );
     }

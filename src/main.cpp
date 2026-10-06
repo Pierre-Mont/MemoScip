@@ -131,6 +131,13 @@ int main(int argc, char** argv)
         SCIP_CALL( SCIPsetIntParam(scip, "separating/maxroundsroot", -1) );    // illimité à la racine
         SCIP_CALL( SCIPsetIntParam(scip, "separating/poolfreq", 1) );    // at tout les noeuds
         includeMycutsSeparator(scip);
+        SCIP_CALL(SCIPsetBoolParam(scip, "lp/cleanuprows", FALSE)); //Disable Row removal (TO BE TESTED)
+        SCIP_CALL(SCIPsetBoolParam(scip, "lp/cleanuprowsroot", FALSE)); //Disable Row removal (TO BE TESTED)
+        SCIP_CALL(SCIPsetIntParam(scip, "lp/rowagelimit", -1)); //Disable row aging : TO TEST DIFFERENT VALUES 
+        SCIP_CALL(SCIPsetIntParam(scip, "separating/maxcuts", g_options.nbslack));      // hors racine (défaut 100)
+        SCIP_CALL(SCIPsetIntParam(scip, "separating/maxcutsroot", g_options.nbslack));  // 
+        SCIP_CALL(SCIPsetRealParam(scip, "cutselection/hybrid/minortho", 0.0));
+        SCIP_CALL(SCIPsetRealParam(scip, "cutselection/hybrid/minorthoroot", 0.0));
     }else{
         SCIP_CALL(SCIPsetSeparating(scip, SCIP_PARAMSETTING_OFF, TRUE));
     }

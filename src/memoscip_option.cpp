@@ -45,12 +45,34 @@ static bool parse_float_suffix(const char* flagName, const char* rest, float& ou
     return true;
 }
 
+/** True if s is the flag `name` followed by nothing, '=' or a digit (also '.', '+' or '-' if allowSign). */
+static bool matches_value_flag(const char* s, const char* name, bool allowSign = false)
+{
+    const size_t len = std::strlen(name);
+    if (std::strncmp(s, name, len) != 0)
+        return false;
+    const char c = s[len];
+    return c == '\0' || c == '=' || (c >= '0' && c <= '9') || (allowSign && (c == '.' || c == '+' || c == '-'));
+}
+
+/** Parses the value of an integer flag "-x=N" / "-xN"; missingMsg is the error when no value is given. */
+static bool parse_int_flag(const char* s, const char* name, const char* missingMsg, int& outVal, std::string& errMsg)
+{
+    const char* rest = s + std::strlen(name);
+    if (*rest == '\0')
+    {
+        errMsg = missingMsg;
+        return false;
+    }
+    return parse_int_suffix(name, rest, outVal, errMsg);
+}
+
 static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::string& errMsg)
 {
     if (s == nullptr || s[0] != '-' || s[1] == '\0')
         return false;
 
-    /* -o / -p  */
+    /* boolean flags */
     if (std::strcmp(s, "-p") == 0)
     {
         out.profiling = true;
@@ -61,18 +83,17 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
         out.debug = true;
         return true;
     }
-
-    if(std::strcmp(s, "-NC") == 0)
+    if (std::strcmp(s, "-NC") == 0)
     {
         out.NC = true;
         return true;
     }
-    if(std::strcmp(s, "-BC") == 0)
+    if (std::strcmp(s, "-BC") == 0)
     {
         out.BC = true;
         return true;
     }
-    if(std::strcmp(s, "-INF") == 0)
+    if (std::strcmp(s, "-INF") == 0)
     {
         out.INF = false;
         return true;
@@ -91,76 +112,38 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
         out.sepa = true;
         return true;
     }
-
-
     if (std::strcmp(s, "-fl") == 0)
     {
         out.finish_Learn = true;
         return true;
     }
-    /* -v... / -l... */
-    if (s[1] == 'v' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
-    {
-        const char* rest = s + 2;
-        if (*rest == '\0')
-        {
-            errMsg = "-v requires a value (e.g. -v=1 or -v1)";
-            return false;
-        }
-        return parse_int_suffix("-v", rest, out.verbosity, errMsg);
-    }
-    if (s[1] == 'l' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
-    {
-        const char* rest = s + 2;
-        if (*rest == '\0')
-        {
-            errMsg = "-l requires a value (e.g. -l=2 or -l2)";
-            return false;
-        }
-        if (!parse_int_suffix("-l", rest, out.learning, errMsg))
-            return false;
-        return true;
-    }
 
-    if (s[1] == 'o' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
+    /* flags with a value: -x=N or -xN (checked after the boolean flags, e.g. -sep before -s) */
+    if (matches_value_flag(s, "-v"))
+        return parse_int_flag(s, "-v", "-v requires a value (e.g. -v=1 or -v1)", out.verbosity, errMsg);
+
+    if (matches_value_flag(s, "-l"))
+        return parse_int_flag(s, "-l", "-l requires a value (e.g. -l=2 or -l2)", out.learning, errMsg);
+
+    if (matches_value_flag(s, "-o"))
     {
-        const char* rest = s + 2;
-        if (*rest == '\0')
-        {
-            errMsg = "-o requires a positive integer value (e.g. -o=2 or -o2)";
-            return false;
-        }
-        if (!parse_int_suffix("-o", rest, out.output, errMsg))
+        const char* msg = "-o requires a positive integer value (e.g. -o=2 or -o2)";
+        if (!parse_int_flag(s, "-o", msg, out.output, errMsg))
             return false;
         if (out.output <= 0)
         {
-            errMsg = "-o requires a positive integer value (e.g. -o=2 or -o2)";
+            errMsg = msg;
             return false;
         }
         return true;
     }
 
-    if (s[1] == 's' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
+    if (matches_value_flag(s, "-s"))
+        return parse_int_flag(s, "-s", "-s requires an integer value (e.g. -s=10 or -s10)", out.nbslack, errMsg);
+
+    if (matches_value_flag(s, "-t"))
     {
-        const char* rest = s + 2;
-        if (*rest == '\0')
-        {
-            errMsg = "-s requires an integer value (e.g. -s=10 or -s10)";
-            return false;
-        }
-        if (!parse_int_suffix("-s", rest, out.nbslack, errMsg))
-            return false;
-        return true;
-    }
-    if (s[1] == 't' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
-    {
-        const char* rest = s + 2;
-        if (*rest == '\0')
-        {
-            errMsg = "-t requires an integer value (e.g. -t=60 or -t60)";
-            return false;
-        }
-        if (!parse_int_suffix("-t", rest, out.timelimit, errMsg))
+        if (!parse_int_flag(s, "-t", "-t requires an integer value (e.g. -t=60 or -t60)", out.timelimit, errMsg))
             return false;
         if (out.timelimit < 0)
         {
@@ -169,73 +152,32 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
         }
         return true;
     }
-    
-    if (s[1] == 'm' && (s[2] == '\0' || s[2] == '=' || ( (s[2] >= '0' && s[2] <= '9') || s[2] == '.' || s[2] == '+' || s[2] == '-')))
+
+    if (matches_value_flag(s, "-m", true))
     {
-        const char* rest = s + 2;
-        if (*rest == '\0')
+        if (s[2] == '\0')
         {
             errMsg = "-m requires a value (e.g. -m=0.5 or -m0.5)";
             return false;
         }
-        if (!parse_float_suffix("-m", rest, out.minInc, errMsg))
-            return false;
-        return true;
+        return parse_float_suffix("-m", s + 2, out.minInc, errMsg);
     }
 
-    if (s[1] == 'b' && s[2] == 'o' && (s[3] == '\0' || s[3] == '=' || (s[3] >= '0' && s[3] <= '9')))
-    {
-        const char* rest = s + 3;
-        if (*rest == '\0')
-        {
-            errMsg = "-bo requires an integer value (e.g. -bo=1 or -bo1)";
-            return false;
-        }
-        if (!parse_int_suffix("-bo", rest, out.branchingOrder, errMsg))
-            return false;
-        return true;
-    }
+    if (matches_value_flag(s, "-bo"))
+        return parse_int_flag(s, "-bo", "-bo requires an integer value (e.g. -bo=1 or -bo1)", out.branchingOrder, errMsg);
 
-    if (s[1] == 'c' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
-    {
-        const char* rest = s + 2;
-        if (*rest == '\0')
-        {
-            errMsg = "-c requires an integer value (e.g. -c=1 or -c1)";
-            return false;
-        }
-        if (!parse_int_suffix("-c", rest, out.maxCutQueueSize, errMsg))
-            return false;
-        return true;
-    }
-    if (s[1] == 'w' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
-    {
-        const char* rest = s + 2;
-        if (*rest == '\0')
-        {
-            errMsg = "-w requires an integer value (e.g. -w=1 or -w1)";
-            return false;
-        }
-        if (!parse_int_suffix("-w", rest, out.Weaken, errMsg))
-            return false;
-        return true;
-    }
-    
-    if (s[1] == 'b' && (s[2] == '\0' || s[2] == '=' || (s[2] >= '0' && s[2] <= '9')))
-    {
-        const char* rest = s + 2;
-        if (*rest == '\0')
-        {
-            errMsg = "-b requires an integer value (e.g. -b=1 or -b1)";
-            return false;
-        }
-        if (!parse_int_suffix("-b", rest, out.branchingHeuristic, errMsg))
-            return false;
-        return true;
-    }
-    
+    if (matches_value_flag(s, "-c"))
+        return parse_int_flag(s, "-c", "-c requires an integer value (e.g. -c=1 or -c1)", out.maxCutQueueSize, errMsg);
 
-    
+    if (matches_value_flag(s, "-pc"))
+        return parse_int_flag(s, "-pc", "-pc requires an integer value (e.g. -pc=1 or -pc1)", out.pseudoObjCut, errMsg);
+
+    if (matches_value_flag(s, "-w"))
+        return parse_int_flag(s, "-w", "-w requires an integer value (e.g. -w=1 or -w1)", out.Weaken, errMsg);
+
+    if (matches_value_flag(s, "-b"))
+        return parse_int_flag(s, "-b", "-b requires an integer value (e.g. -b=1 or -b1)", out.branchingHeuristic, errMsg);
+
     return false;
 }
 
@@ -292,6 +234,7 @@ void print_memoscip_usage(const char* programName)
         << "  -b=N       Branching heuristic (0=custom, 3=relpscost, 4=replay from Instance/branch_replay_sequence.txt)\n"
         << "  -bo=N      Branching order (integer, default 1)\n"
         << "  -w=N       Weaken constraints (0 = no weakening, 1 = weaken constraints)\n"
+        << "  -pc=N      Pseudo objective cutoff proof (0 = always dive, 1 = use pseudo objective proof, default 1)\n"
         << "\n"
         << "Examples:\n"
         << "  " << programName << " problem.lp -v=1\n"

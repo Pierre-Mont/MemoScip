@@ -16,7 +16,7 @@ struct MemoSCIPRunOptions {
     bool profiling = false;
 
     bool debug = false;
-    /*Node consistency*/
+    /** Node consistency (reduced cost filtering). */
     bool NC = false;
     /** Bound propagation: 0 = off, >= 1 = enable branching consistency. */
     bool BC = false;
@@ -40,9 +40,11 @@ struct MemoSCIPRunOptions {
 
     bool sepa = false; // True = enable separation, False = disable separation
 
-    bool finish_Learn = false; // Ture = generate constraints until root node,  False = stop when problem is solved
+    bool finish_Learn = false; // True = generate constraints until root node,  False = stop when problem is solved
 
     int Weaken = 0; // 0 = no weakening, 1 = weaken constraints
+
+    int pseudoObjCut = 1; // 0 = always prove unsolved nodes with a dive LP, 1 = use the pseudo objective proof when it reaches the incumbent
 };
 
 /** Parse argv. Expects one instance file path (any non-flag argument) and optional flags. */

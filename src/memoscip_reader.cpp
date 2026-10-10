@@ -14,6 +14,7 @@
 #include <memory>
 #include <regex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -41,21 +42,21 @@ private:
     int fill_buffer() {
         if (in_buf_.empty()) in_buf_.resize(BUF_SIZE);
         if (out_buf_.empty()) out_buf_.resize(BUF_SIZE);
-        
+
         size_t nread = fread(in_buf_.data(), 1, BUF_SIZE, file_);
         if (nread == 0 && ferror(file_)) return -1;
-        
+
         stream_.next_in = in_buf_.data();
         stream_.avail_in = nread;
         stream_.next_out = out_buf_.data();
         stream_.avail_out = out_buf_.size();
-        
+
         lzma_ret ret = lzma_code(&stream_, nread == 0 ? LZMA_FINISH : LZMA_RUN);
         if (ret != LZMA_OK && ret != LZMA_STREAM_END) return -1;
-        
+
         size_t produced = out_buf_.size() - stream_.avail_out;
         setg((char*)out_buf_.data(), (char*)out_buf_.data(), (char*)out_buf_.data() + produced);
-        
+
         return produced > 0 ? *eback() : EOF;
     }
 
@@ -65,7 +66,7 @@ public:
         if (ret != LZMA_OK) throw std::runtime_error("lzma_stream_decoder failed");
         fill_buffer();
     }
-    
+
     ~LZMAStreambuf() {
         lzma_end(&stream_);
     }
@@ -86,7 +87,8 @@ public:
     }
 };
 
-std::unique_ptr<std::istream> open_instance_file(const std::string& path, std::string& err) {
+/** Opens a plain or .xz compressed instance file. */
+static std::unique_ptr<std::istream> open_instance_file(const std::string& path, std::string& err) {
     if (path.length() >= 3 && path.substr(path.length() - 3) == ".xz") {
         FILE* f = fopen(path.c_str(), "rb");
         if (!f) {
@@ -110,6 +112,26 @@ std::unique_ptr<std::istream> open_instance_file(const std::string& path, std::s
     }
 }
 
+/** Creates and adds a binary variable; on error sets err and returns false. */
+static bool addBinaryVar(SCIP* scip, const char* name, SCIP_Real obj, SCIP_VAR*& var, std::string& err)
+{
+    if (SCIPcreateVarBasic(scip, &var, name, 0.0, 1.0, obj, SCIP_VARTYPE_BINARY) != SCIP_OKAY) { err = "SCIP error creating var"; return false; }
+    if (SCIPaddVar(scip, var) != SCIP_OKAY) { err = "SCIP error adding var"; return false; }
+    return true;
+}
+
+/** Creates, adds and releases the linear constraint lhs <= coefs.vars <= rhs; on error sets err
+ *  ("SCIP error creating/adding/releasing <what>") and returns false. */
+static bool addLinearCons(SCIP* scip, const char* name, int nvars, SCIP_VAR** vars, SCIP_Real* coefs,
+    SCIP_Real lhs, SCIP_Real rhs, const std::string& what, std::string& err)
+{
+    SCIP_CONS* cons = nullptr;
+    if (SCIPcreateConsBasicLinear(scip, &cons, name, nvars, vars, coefs, lhs, rhs) != SCIP_OKAY) { err = "SCIP error creating " + what; return false; }
+    if (SCIPaddCons(scip, cons) != SCIP_OKAY) { err = "SCIP error adding " + what; return false; }
+    if (SCIPreleaseCons(scip, &cons) != SCIP_OKAY) { err = "SCIP error releasing " + what; return false; }
+    return true;
+}
+
 
 bool readKPCGInstance(SCIP* scip, const std::string& path, int encoding, std::string& err)
 {
@@ -126,8 +148,8 @@ bool readKPCGInstance(SCIP* scip, const std::string& path, int encoding, std::st
 
     int n_items = -1;
     int capacity = -1;
-    vector<tuple<int,int,int>> items;
-    vector<pair<int,int>> edges;
+    vector<tuple<int,int,int>> items;  // (index, profit, weight)
+    vector<pair<int,int>> edges;       // conflicts (i, j) with i < j
     string mode;
 
     regex param_re(R"(^\s*param\s+(\w+)\s*:=\s*(\d+)\s*;\s*$)");
@@ -201,7 +223,7 @@ bool readKPCGInstance(SCIP* scip, const std::string& path, int encoding, std::st
         }
     }
 
-    // Create SCIP variables
+    // Create SCIP variables: x<i>_0 = item i not taken (pays its profit), x<i>_1 = item i taken
     vector<SCIP_VAR*> var0(n_items, nullptr);
     vector<SCIP_VAR*> var1(n_items, nullptr);
 
@@ -217,49 +239,25 @@ bool readKPCGInstance(SCIP* scip, const std::string& path, int encoding, std::st
         snprintf(name0, sizeof(name0), "x%d_0", idx);
         snprintf(name1, sizeof(name1), "x%d_1", idx);
 
-        SCIP_RETCODE ret;
-        SCIP_VAR* v0 = nullptr;
-        SCIP_VAR* v1 = nullptr;
+        if (!addBinaryVar(scip, name0, (SCIP_Real)profit, var0[idx], err)) return false;
+        if (!addBinaryVar(scip, name1, 0.0, var1[idx], err)) return false;
 
-        ret = SCIPcreateVarBasic(scip, &v0, name0, 0.0, 1.0, (SCIP_Real)profit, SCIP_VARTYPE_INTEGER);
-        if (ret != SCIP_OKAY) { err = "SCIP error creating var"; return false; }
-        ret = SCIPaddVar(scip, v0);
-        if (ret != SCIP_OKAY) { err = "SCIP error adding var"; return false; }
-
-        ret = SCIPcreateVarBasic(scip, &v1, name1, 0.0, 1.0, 0.0, SCIP_VARTYPE_INTEGER);
-        if (ret != SCIP_OKAY) { err = "SCIP error creating var"; return false; }
-        ret = SCIPaddVar(scip, v1);
-        if (ret != SCIP_OKAY) { err = "SCIP error adding var"; return false; }
-
-        var0[idx] = v0;
-        var1[idx] = v1;
-
+        // the problem keeps a reference to the variables, the pointers stay valid
+        SCIP_VAR* v0 = var0[idx];
+        SCIP_VAR* v1 = var1[idx];
         SCIPreleaseVar(scip, &v0);
         SCIPreleaseVar(scip, &v1);
     }
 
     // knapsack constraint: sum weight * x0 >= knapsack_rhs
     {
-        vector<SCIP_VAR*> consvars;
         vector<SCIP_Real> coefs;
-        consvars.reserve(n_items);
         coefs.reserve(n_items);
-        for (int idx = 0; idx < n_items; ++idx) {
-            int weight = get<2>(items[idx]);
-            consvars.push_back(var0[idx]);
-            coefs.push_back((SCIP_Real)weight);
-        }
-        SCIP_CONS* cons = nullptr;
-        SCIP_RETCODE ret = SCIPcreateConsBasicLinear(scip, &cons, "knapsack",
-                                                     (int)consvars.size(), consvars.data(), coefs.data(),
-                                                     (SCIP_Real)knapsack_rhs, SCIPinfinity(scip));
-        if (ret != SCIP_OKAY) { err = "SCIP error creating knapsack constraint"; return false; }
-        ret = SCIPaddCons(scip, cons);
-        if (ret != SCIP_OKAY) { err = "SCIP error adding knapsack constraint"; return false; }
-        {
-            SCIP_RETCODE r2 = SCIPreleaseCons(scip, &cons);
-            (void)r2;
-        }
+        for (int idx = 0; idx < n_items; ++idx)
+            coefs.push_back((SCIP_Real)get<2>(items[idx]));
+        if (!addLinearCons(scip, "knapsack", n_items, var0.data(), coefs.data(),
+                           (SCIP_Real)knapsack_rhs, SCIPinfinity(scip), "knapsack constraint", err))
+            return false;
     }
 
     // Conflict edges use either the original direct formulation or a tuple formulation.
@@ -271,30 +269,26 @@ bool readKPCGInstance(SCIP* scip, const std::string& path, int encoding, std::st
             return false;
         }
 
+        char cname[128];
         if (encoding == 0) {
+            // x<i>_1 + x<j>_1 <= 1
             SCIP_VAR* consvars[2] = { var1[i], var1[j] };
             SCIP_Real coefs[2] = { 1.0, 1.0 };
-            char cname[128];
             snprintf(cname, sizeof(cname), "conflict_%zu", k);
-            SCIP_CONS* cons = nullptr;
-            SCIP_RETCODE ret = SCIPcreateConsBasicLinear(scip, &cons, cname, 2, consvars, coefs, -SCIPinfinity(scip), 1.0);
-            if (ret != SCIP_OKAY) { err = "SCIP error creating conflict constraint"; return false; }
-            ret = SCIPaddCons(scip, cons);
-            if (ret != SCIP_OKAY) { err = "SCIP error adding conflict constraint"; return false; }
-            SCIP_RETCODE r2 = SCIPreleaseCons(scip, &cons);
-            (void)r2;
+            if (!addLinearCons(scip, cname, 2, consvars, coefs, -SCIPinfinity(scip), 1.0, "conflict constraint", err))
+                return false;
             continue;
         }
 
+        // Tuple formulation: one variable per assignment of (x<i>, x<j>), the forbidden tuple 11 is fixed to 0
         SCIP_VAR* tuples[4] = { nullptr, nullptr, nullptr, nullptr };
         const char* tuple_labels[4] = { "00", "11", "10", "01" };
-        const SCIP_Real tuple_objs[4] = { 0.0, 0.0, 0.0, 0.0 };
         for (int tuple = 0; tuple < 4; ++tuple) {
             char name[128];
             snprintf(name, sizeof(name), "x%d_%s_%d", i, tuple_labels[tuple], j);
 
             SCIP_VAR* tuple_var = nullptr;
-            SCIP_RETCODE ret = SCIPcreateVarBasic(scip, &tuple_var, name, 0.0, 1.0,tuple_objs[tuple], SCIP_VARTYPE_INTEGER);
+            SCIP_RETCODE ret = SCIPcreateVarBasic(scip, &tuple_var, name, 0.0, 1.0, 0.0, SCIP_VARTYPE_BINARY);
             if (ret != SCIP_OKAY) { err = "SCIP error creating tuple variable"; return false; }
             ret = SCIPaddVar(scip, tuple_var);
             if(tuple == 1) {
@@ -304,9 +298,9 @@ bool readKPCGInstance(SCIP* scip, const std::string& path, int encoding, std::st
             tuples[tuple] = tuple_var;
             ret = SCIPreleaseVar(scip, &tuple_var);
             if (ret != SCIP_OKAY) { err = "SCIP error releasing tuple variable"; return false; }
-            
         }
 
+        // Marginal constraints: each literal is the sum of the tuples containing it
         SCIP_Real marginal_coefs[3] = { 1.0, 1.0, -1.0 };
         SCIP_VAR* marginal_vars[4][3] = {
             { tuples[0], tuples[3], var0[i] },
@@ -316,30 +310,16 @@ bool readKPCGInstance(SCIP* scip, const std::string& path, int encoding, std::st
         };
         const char* marginal_labels[4] = { "i0", "i1", "j0", "j1" };
         for (int marginal = 0; marginal < 4; ++marginal) {
-            char cname[128];
             snprintf(cname, sizeof(cname), "tuple_%zu_%s", k, marginal_labels[marginal]);
-            SCIP_CONS* cons = nullptr;
-            SCIP_RETCODE ret = SCIPcreateConsBasicLinear(scip, &cons, cname, 3,
-                                                         marginal_vars[marginal], marginal_coefs,
-                                                         0.0, 0.0);
-            if (ret != SCIP_OKAY) { err = "SCIP error creating tuple marginal constraint"; return false; }
-            ret = SCIPaddCons(scip, cons);
-            if (ret != SCIP_OKAY) { err = "SCIP error adding tuple marginal constraint"; return false; }
-            ret = SCIPreleaseCons(scip, &cons);
-            if (ret != SCIP_OKAY) { err = "SCIP error releasing tuple marginal constraint"; return false; }
+            if (!addLinearCons(scip, cname, 3, marginal_vars[marginal], marginal_coefs, 0.0, 0.0, "tuple marginal constraint", err))
+                return false;
         }
 
+        // Exactly one tuple is selected
         SCIP_Real tuple_sum_coefs[4] = { 1.0, 1.0, 1.0, 1.0 };
-        char cname[128];
         snprintf(cname, sizeof(cname), "tuple_%zu_sum", k);
-        SCIP_CONS* cons = nullptr;
-        SCIP_RETCODE ret = SCIPcreateConsBasicLinear(scip, &cons, cname, 4, tuples, tuple_sum_coefs, 1.0, 1.0);
-        if (ret != SCIP_OKAY) { err = "SCIP error creating tuple sum constraint"; return false; }
-        ret = SCIPaddCons(scip, cons);
-        if (ret != SCIP_OKAY) { err = "SCIP error adding tuple sum constraint"; return false; }
-        ret = SCIPreleaseCons(scip, &cons);
-        if (ret != SCIP_OKAY) { err = "SCIP error releasing tuple sum constraint"; return false; }
-
+        if (!addLinearCons(scip, cname, 4, tuples, tuple_sum_coefs, 1.0, 1.0, "tuple sum constraint", err))
+            return false;
     }
 
     // domain constraints: x0 + x1 = 1
@@ -348,15 +328,8 @@ bool readKPCGInstance(SCIP* scip, const std::string& path, int encoding, std::st
         SCIP_Real coefs[2] = { 1.0, 1.0 };
         char cname[128];
         snprintf(cname, sizeof(cname), "domain_constraint_%d", idx);
-        SCIP_CONS* cons = nullptr;
-        SCIP_RETCODE ret = SCIPcreateConsBasicLinear(scip, &cons, cname, 2, consvars, coefs, 1.0, 1.0);
-        if (ret != SCIP_OKAY) { err = "SCIP error creating domain constraint"; return false; }
-        ret = SCIPaddCons(scip, cons);
-        if (ret != SCIP_OKAY) { err = "SCIP error adding domain constraint"; return false; }
-        {
-            SCIP_RETCODE r2 = SCIPreleaseCons(scip, &cons);
-            (void)r2;
-        }
+        if (!addLinearCons(scip, cname, 2, consvars, coefs, 1.0, 1.0, "domain constraint", err))
+            return false;
     }
 
     return true;

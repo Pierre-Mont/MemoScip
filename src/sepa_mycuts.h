@@ -43,7 +43,5 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
 
 void includeMycutsSeparator(SCIP* scip);
 
-
-
 SCIP_Longint Myceil(double val);
 #endif

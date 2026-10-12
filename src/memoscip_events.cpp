@@ -631,10 +631,13 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
             SCIP_Real rhs_ctr=rhs_summed;
             vector<SCIP_Real> ResFus2=ResFus;
 
+            // Reduce first, then collect: a tuple reduction can raise the coefficient of an already visited variable
+            for (size_t i = 0; i < ResFus2.size(); i++)
+                if(!SCIPisDualfeasZero(scip,ResFus2[i]))
+                    reduceComplementaryCoefs(scip, ResFus2, i, rhs_ctr, true);
             for (size_t i = 0; i < ResFus2.size(); i++)
             {
                 if(!SCIPisDualfeasZero(scip,ResFus2[i])){
-                    reduceComplementaryCoefs(scip, ResFus2, i, rhs_ctr, false);
                     NewInds.push_back(i);
                     NewCoefs.push_back(ResFus2[i]);
                     NewVar.push_back(g_memoscip.AllVars[i]);
@@ -686,12 +689,17 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
             char name[100];
             snprintf(name, 100, "cut_%lld_%d", nodenumber,SCIPgetDepth(scip));
             SCIP_Real rhs_ctr=rhs_summed;
+            // Reduce first, then collect: a tuple reduction can raise the coefficient of an already visited variable
             for (size_t i = 0; i < ResFus.size(); i++)
             {
                 if(!SCIPisDualfeasZero(scip,ResFus[i])){
                     assert(g_options.encoding==0 || g_memoscip.TupleAuxVar[i].empty() || g_memoscip.TupleAuxVar[i].size() == 3);
                     reduceComplementaryCoefs(scip, ResFus, i, rhs_ctr, true);
-
+                }
+            }
+            for (size_t i = 0; i < ResFus.size(); i++)
+            {
+                if(!SCIPisDualfeasZero(scip,ResFus[i])){
                     if(i<g_memoscip.nodeInfoMap[parentNumber].redcosts.size() && g_options.verbosity > 4){
                       cout<<SCIPvarGetName(g_memoscip.AllVars[i])<< " i "<< i<<" resfus "<<ResFus[i]<<" parentrc "<<g_memoscip.nodeInfoMap[parentNumber].redcosts[i]<<" diff "<<ResFus[i]- g_memoscip.nodeInfoMap[parentNumber].redcosts[i]<<" Bounds "<<g_memoscip.VarUb[i]<<" "<< g_memoscip.VarLb[i]<<endl;
                     }
@@ -1035,12 +1043,12 @@ static void handleUbChanged(SCIP* scip, SCIP_NODE* node, SCIP_Longint nodenumber
         g_memoscip.VarUb[idx]=newbound;
     }else if(newbound==SCIPinfinity(scip) || newbound==1){
         g_memoscip.VarUb[idx]=1;
-        if(g_options.encoding==0 || g_memoscip.TupleAuxVar.empty())
+        if(g_options.encoding==0 || g_memoscip.TupleAuxVar[pos].empty())
             g_memoscip.VarLb[g_memoscip.AuxVar[pos]]=0;
     }else{
         g_memoscip.VarUb[idx]=newbound;
         assert(newbound==0);
-        if(g_options.encoding==0 || g_memoscip.TupleAuxVar.empty())
+        if(g_options.encoding==0 || g_memoscip.TupleAuxVar[pos].empty())
             g_memoscip.VarLb[g_memoscip.AuxVar[pos]]=1;
     }
 }

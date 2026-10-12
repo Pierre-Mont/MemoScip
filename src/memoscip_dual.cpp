@@ -455,6 +455,7 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
             if(g_memoscip.VarLb[i]==1){
                 node.Var1.push_back(allVarsIndex(g_memoscip.AllVars[i]));
             }
+            
         }
     }
     vector<SCIP_Real> TempCoef(nAllVars,0.0);
@@ -474,14 +475,14 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
 
         if(!SCIPisDualfeasZero(scip,diffy_i[i]) && g_memoscip.VarUb[i]!=SCIPinfinity(scip) ){
             TempCoef[i]+=diffy_i[i];
-            forEachAuxVar(shiftedIndex(var), false, [&](int aux){ TempCoef[aux]+=diffy_i[i]; });
+            forEachAuxVar(shiftedIndex(var), true, [&](int aux){ TempCoef[aux]+=diffy_i[i]; });
             sumdual+=diffy_i[i];
         }
         if(g_options.debug){
             if(!SCIPisDualfeasZero(scip,newy_i[i]) && g_memoscip.VarUb[i]!=SCIPinfinity(scip) ){
                 Truesumdual+=newy_i[i];
                 TrueTempCoef[i]+=newy_i[i];
-                forEachAuxVar(shiftedIndex(var), false, [&](int aux){ TrueTempCoef[aux]+=newy_i[i]; });
+                forEachAuxVar(shiftedIndex(var), true, [&](int aux){ TrueTempCoef[aux]+=newy_i[i]; });
             }
         }
     }
@@ -489,12 +490,12 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
     assert(nAllVars == TempCoef.size());
     if(g_options.verbosity > 2){
         cout<<"DUAL proof"<<endl;
-        printProof(scip, TempCoef, "<=", sumdual, true);
+        printProof(scip, TempCoef, ">=", sumdual, true);
     }
 
     if(g_options.verbosity > 2 && g_options.debug){
         cout<<"TRUEDUAL proof"<<endl;
-        printProof(scip, TrueTempCoef, "<=", Truesumdual, true);
+        printProof(scip, TrueTempCoef, ">=", Truesumdual, true);
     }
     assert(!parentredcost.empty());
     for(size_t i = 0; i < nAllVars; ++i )
@@ -631,7 +632,7 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
                 if(g_memoscip.VarUb[i]==0 && coef > 0){
                     Coefs[i]+=coef;
                 }else if(g_memoscip.VarLb[i]==1 && coef < 0){
-                    forEachAuxVar(shiftedIndex(var), false, [&](int aux){ Coefs[aux]-=coef; });
+                    forEachAuxVar(shiftedIndex(var), true, [&](int aux){ Coefs[aux]-=coef; });
                 }
             }
         }
@@ -769,7 +770,7 @@ SCIP_RETCODE getDualProofFromPseudoObjCutoff(
 
         if(!SCIPisDualfeasZero(scip,diffy[i]) && g_memoscip.VarUb[i]!=SCIPinfinity(scip) ){
             TempCoef[i]+=diffy[i];
-            forEachAuxVar(shiftedIndex(var), false, [&](int aux){ TempCoef[aux]+=diffy[i]; });
+            forEachAuxVar(shiftedIndex(var), true, [&](int aux){ TempCoef[aux]+=diffy[i]; });
             sumdual+=diffy[i];
         }
     }

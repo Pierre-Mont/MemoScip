@@ -310,6 +310,10 @@ bool readKPCGInstance(SCIP* scip, const std::string& path, int encoding, std::st
         };
         const char* marginal_labels[4] = { "i0", "i1", "j0", "j1" };
         for (int marginal = 0; marginal < 4; ++marginal) {
+            // i1 and j1 are implied by i0/j0, the tuple sum and the domain constraints (i1 = sum - i0 - domain_i):
+            // keeping them makes the equality rows linearly dependent and the LP duals non-unique (huge dual values)
+            if (marginal == 1 || marginal == 3)
+                continue;
             snprintf(cname, sizeof(cname), "tuple_%zu_%s", k, marginal_labels[marginal]);
             if (!addLinearCons(scip, cname, 3, marginal_vars[marginal], marginal_coefs, 0.0, 0.0, "tuple marginal constraint", err))
                 return false;

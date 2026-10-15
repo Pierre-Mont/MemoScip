@@ -141,9 +141,9 @@ static SCIP_RETCODE configureScip(SCIP* scip)
 
 
     //Fix numerics
-    SCIP_CALL( SCIPsetRealParam(scip, "numerics/feastol",     9e-5) );
-    SCIP_CALL( SCIPsetRealParam(scip, "numerics/dualfeastol", 9e-5) );
-    SCIP_CALL( SCIPsetRealParam(scip, "numerics/epsilon",     1e-6) );
+    SCIP_CALL( SCIPsetRealParam(scip, "numerics/feastol",     1e-6) );
+    SCIP_CALL( SCIPsetRealParam(scip, "numerics/dualfeastol", 1e-7) );
+    SCIP_CALL( SCIPsetRealParam(scip, "numerics/epsilon",     1e-9) );
 
     SCIP_CALL( SCIPsetBoolParam(scip, "misc/scaleobj", FALSE) );
 

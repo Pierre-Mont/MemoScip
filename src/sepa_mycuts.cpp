@@ -62,10 +62,17 @@ static double roundToDecimals(double val, int decimals) {
 
 /** Ceiling that tolerates values slightly above an integer. */
 SCIP_Longint Myceil(double val){
-   if(val - floor(val) < 1e-5)
+   if(val - floor(val) < 1e-6)
       return (SCIP_Longint)floor(val);
    else
       return (SCIP_Longint)ceil(val);
+}
+
+SCIP_Real MyPrimalbound(SCIP* scip){
+   SCIP_Real ub = SCIPgetPrimalbound(scip);
+   if(SCIPisInfinity(scip, fabs(ub)))
+      return ub;
+   return floor(ub + 1e-6);
 }
 
 /** Sets the negative coefficients of slack variables to 0 and returns the sum of the remaining negative coefficients. */

@@ -6,6 +6,10 @@
 
 #include <vector>
 
+/** Sets to 0 the coefficients of the proof sum coefs[i] x_i >= rhs that are below 1e-9 times the largest one.
+ *  rhs is relaxed with the global bound of each dropped variable, so the proof stays valid. */
+void dropNegligibleCoefs(SCIP* scip, std::vector<SCIP_Real>& coefs, SCIP_Real& rhs);
+
 std::vector<SCIP_Real> FusionResolution(SCIP* scip, SCIP_Longint child0, SCIP_Longint child1);
 SCIP_RETCODE FinishLearn(SCIP* scip, SCIP_Longint node);
 SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber);

@@ -220,7 +220,7 @@ static SCIP_RETCODE processNodeLP(SCIP* scip, SCIP_LPSOLSTAT stat, SCIP_Longint 
             cout<<"LP OPTIMAL: "<<lpobj<<endl;
         // Only analyse the LP if the lower bound increased enough
         SCIP_Real parentlb = g_memoscip.nodeInfoMap[parentnumber].lb;
-        if(!SCIPisDualfeasZero(scip,lpobj) && (fabs(parentlb - lpobj)>= g_options.minInc || Myceil(lpobj)>=SCIPgetPrimalbound(scip) || lpobj - Myceil(parentlb) > 1e-5))
+        if(!SCIPisDualfeasZero(scip,lpobj) && (fabs(parentlb - lpobj)>= g_options.minInc || Myceil(lpobj)>=MyPrimalbound(scip) || lpobj - Myceil(parentlb) > 1e-5))
             AnalyseDualSol(scip,nodenumber );
         else
             copyParentInfo(nodenumber);
@@ -259,6 +259,42 @@ static SCIP_Real pseudoObjAfterBranching(SCIP_Longint parentnumber, int decVar)
     return obj;
 }
 
+/** In a dive, relaxes each learned cut row sum a x - s = rhs whose slack column s is not in the LP to the side
+ *  allowed by s >= 0 (sum a x >= rhs). A column added to the LP in another subtree is removed from the LP when SCIP
+ *  switches subtree and is only added back by pricing, which is not called in a dive: without its slack the row
+ *  would be an equality and the dive LP could be wrongly infeasible. */
+static SCIP_RETCODE relaxCutRowsWithoutSlackColumn(SCIP* scip)
+{
+    assert(SCIPinDive(scip));
+    g_memoscip.DiveRelaxedRows.clear();
+    for (SCIP_VAR* var : g_memoscip.AllVars)
+    {
+        if(!isSlackVar(var) || SCIPvarGetStatus(var) != SCIP_VARSTATUS_COLUMN)
+            continue;
+        SCIP_COL* col = SCIPvarGetCol(var);
+        // A slack fixed to 0 keeps the equality
+        if(SCIPcolIsInLP(col) || !SCIPisPositive(scip, SCIPvarGetUbLocal(var)))
+            continue;
+        // Rows of the LP are linked to all their columns, including the columns that are not in the LP
+        SCIP_ROW** colrows = SCIPcolGetRows(col);
+        SCIP_Real* colvals = SCIPcolGetVals(col);
+        for (int k = 0; k < SCIPcolGetNNonz(col); ++k)
+        {
+            SCIP_ROW* row = colrows[k];
+            if(SCIProwGetLPPos(row) < 0 || !SCIPisEQ(scip, SCIProwGetLhs(row), SCIProwGetRhs(row)))
+                continue;
+            if(colvals[k] < 0.0)
+                SCIP_CALL( SCIPchgRowRhsDive(scip, row, SCIPinfinity(scip)) );
+            else
+                SCIP_CALL( SCIPchgRowLhsDive(scip, row, -SCIPinfinity(scip)) );
+            g_memoscip.DiveRelaxedRows.push_back(row);
+            if(g_options.verbosity > 3)
+                cout<<"Dive: relax row "<<SCIProwGetName(row)<<" (slack "<<SCIPvarGetName(var)<<" not in the LP)"<<endl;
+        }
+    }
+    return SCIP_OKAY;
+}
+
 static
 SCIP_DECL_EVENTEXEC(eventExecNodeSolved)
 {
@@ -287,7 +323,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeSolved)
     // as soon as it is focused, without propagation nor LP: its proof is that pseudo objective, as for the
     // never-focused nodes handled in eventExecNodeDelete.
     const int decVar = (stat==SCIP_LPSOLSTAT_NOTSOLVED && nodenumber != 1) ? getBranchingVarFixedTo1(node) : -1;
-    if(g_options.pseudoObjCut != 0 && decVar >= 0 && pseudoObjAfterBranching(parentnumber, decVar) >= SCIPgetPrimalbound(scip)){
+    if(g_options.pseudoObjCut != 0 && decVar >= 0 && Myceil(pseudoObjAfterBranching(parentnumber, decVar)) >= MyPrimalbound(scip)){
         if(g_options.verbosity > 3)
             cout<<"Node "<<nodenumber<<" cut off by its pseudo objective, decision "<<SCIPvarGetName(g_memoscip.AllVars[decVar])<<endl;
         // The LP of a node cut off at focus is not constructed, but the proof needs its rows (weighted by the parent duals)
@@ -317,6 +353,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeSolved)
             }
         }
         SCIP_CALL( SCIPflushLP(scip) );
+        SCIP_CALL( relaxCutRowsWithoutSlackColumn(scip) );
         SCIP_CALL( SCIPsolveDiveLP(scip, -1, &lperror, &cutoff) );
         SCIP_LPSOLSTAT stat2 = SCIPgetLPSolstat(scip);
 
@@ -332,6 +369,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeSolved)
         }
 
         SCIP_CALL( SCIPendDive(scip) );
+        g_memoscip.DiveRelaxedRows.clear();
     }else{
         SCIP_CALL( processNodeLP(scip, stat, nodenumber, parentnumber, handled) );
         if(!handled){
@@ -345,7 +383,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeSolved)
         assert(ninfo.Status=="FEASIBLE");
     }
 
-    if(ninfo.lb>=SCIPgetPrimalbound(scip))
+    if(Myceil(ninfo.lb)>=MyPrimalbound(scip))
         ninfo.LbgUb=true;
 
     if(g_options.verbosity > 2)
@@ -444,7 +482,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeFocused)
     NodeInfo &ninfo = g_memoscip.nodeInfoMap[nodenumber]; // creates if not existing
     ninfo.visited = true;
     ninfo.number = nodenumber;
-    ninfo.ub = SCIPgetPrimalbound(scip);
+    ninfo.ub = MyPrimalbound(scip);
     if(nodenumber!=1)  // skip root
     {
         parent = SCIPnodeGetParent(node);
@@ -561,7 +599,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
     //Case node was not processed. Mostly because it was pruned immediately after creation, since a brother node found a better solution than the pseudo obj of this node.
     if(parentNumber==-1){
         SCIP_Longint SCIP_parentNumber = SCIPnodeGetNumber(parent);
-        if(SCIPisLT(scip, ceil(g_memoscip.nodeInfoMap[SCIP_parentNumber].lb), SCIPgetPrimalbound(scip))){
+        if(Myceil(g_memoscip.nodeInfoMap[SCIP_parentNumber].lb) < MyPrimalbound(scip)){
             int nvars;
             // First query the required size with branchvarssize = 0
             SCIPnodeGetParentBranchings(node, NULL, NULL, NULL, &nvars, 0);
@@ -580,6 +618,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
 
                 for (int i = 0; i < nvars; ++i)
                 {
+                    cout<<"Parent branching var "<<SCIPvarGetName(vars[i])<<" bound "<<bounds[i]<<" boundtype "<<boundtypes[i]<<endl;
                     decvar = allVarsIndex(vars[i]);
                     assert(SCIPvarGetName(vars[i]) == SCIPvarGetName(g_memoscip.AllVars[decvar]));
                     assert(bounds[i]==1);
@@ -633,11 +672,12 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
 
             // Reduce first, then collect: a tuple reduction can raise the coefficient of an already visited variable
             for (size_t i = 0; i < ResFus2.size(); i++)
-                if(!SCIPisDualfeasZero(scip,ResFus2[i]))
+                if(ResFus2[i] != 0.0)
                     reduceComplementaryCoefs(scip, ResFus2, i, rhs_ctr, true);
+            dropNegligibleCoefs(scip, ResFus2, rhs_ctr);
             for (size_t i = 0; i < ResFus2.size(); i++)
             {
-                if(!SCIPisDualfeasZero(scip,ResFus2[i])){
+                if(ResFus2[i] != 0.0){
                     NewInds.push_back(i);
                     NewCoefs.push_back(ResFus2[i]);
                     NewVar.push_back(g_memoscip.AllVars[i]);
@@ -648,8 +688,10 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
                 cout<<"NODE DELETE Adding cut "<<name<<" with rhs "<<rhs_ctr<<" and "<<NewVar.size()<< " variables vs Original vars "<< g_memoscip.nOriginalVar<< endl;
 
             assert(NewVar.size()==NewCoefs.size());
-            assert(NewVar.size()!=0);
-            SCIP_CALL( SCIPqueueCut(scip, name,
+            // A proof whose coefficients all cancel (e.g. c*(x + aux) >= c reduced to 0 >= 0) is trivial: its rhs is only rounding noise
+            assert(!NewVar.empty() || rhs_ctr <= 1e-6*max(1.0,fabs(rhs_summed)));
+            if(!NewVar.empty())
+                SCIP_CALL( SCIPqueueCut(scip, name,
                                 (int)NewVar.size(),
                                 NewVar.data(),
                                 NewCoefs.data(),
@@ -664,7 +706,15 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
         assert(fabs(nodeInfo.DualProofCoef.second-nodeInfo.lb_increase)<1e-5);
 
         addNodeProof(nodenumber, ResFus, rhs_summed);
+        if(g_options.verbosity > 2){
+            cout<<"mid res "<<endl;
+            printProof(scip, ResFus, ">=", rhs_summed, true);
+        }
         applyBoundPropagationRemovals(nodenumber, ResFus, rhs_summed);
+        if(g_options.verbosity > 2){
+            cout<<"mid222 res "<<endl;
+            printProof(scip, ResFus, ">=", rhs_summed, true);
+        }
         applyNodeConsistency(scip, nodenumber, parentNumber, ResFus, rhs_summed);
 
         if(g_options.verbosity > 2){
@@ -673,13 +723,21 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
         }
 
         checkSummedRhs(nodenumber, children, rhs_summed);
-
+         if(g_options.verbosity > 2){
+            cout<<"final2 res "<<endl;
+            printProof(scip, ResFus, ">=", rhs_summed, true);
+        }
+        dropNegligibleCoefs(scip, ResFus, rhs_summed);
+         if(g_options.verbosity > 2){
+            cout<<"drop res "<<endl;
+            printProof(scip, ResFus, ">=", rhs_summed, true);
+        }
         // The proof of the node (before reduction) is kept to be fused at its parent
         vector<int> Inds;
         vector<SCIP_Real> Coefs;
         for (size_t i = 0; i < ResFus.size(); i++)
         {
-            if(!SCIPisDualfeasZero(scip,ResFus[i])){
+            if(ResFus[i] != 0.0){
                 Inds.push_back(i);
                 Coefs.push_back(ResFus[i]);
                 assert( i >= g_memoscip.nodeInfoMap[parentNumber].redcosts.size() || ResFus[i]- g_memoscip.nodeInfoMap[parentNumber].redcosts[i]<1e-3 || g_memoscip.VarUb[i] == 0);
@@ -692,14 +750,14 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
             // Reduce first, then collect: a tuple reduction can raise the coefficient of an already visited variable
             for (size_t i = 0; i < ResFus.size(); i++)
             {
-                if(!SCIPisDualfeasZero(scip,ResFus[i])){
+                if(ResFus[i] != 0.0){
                     assert(g_options.encoding==0 || g_memoscip.TupleAuxVar[i].empty() || g_memoscip.TupleAuxVar[i].size() == 3);
                     reduceComplementaryCoefs(scip, ResFus, i, rhs_ctr, true);
                 }
             }
             for (size_t i = 0; i < ResFus.size(); i++)
             {
-                if(!SCIPisDualfeasZero(scip,ResFus[i])){
+                if(ResFus[i] != 0.0){
                     if(i<g_memoscip.nodeInfoMap[parentNumber].redcosts.size() && g_options.verbosity > 4){
                       cout<<SCIPvarGetName(g_memoscip.AllVars[i])<< " i "<< i<<" resfus "<<ResFus[i]<<" parentrc "<<g_memoscip.nodeInfoMap[parentNumber].redcosts[i]<<" diff "<<ResFus[i]- g_memoscip.nodeInfoMap[parentNumber].redcosts[i]<<" Bounds "<<g_memoscip.VarUb[i]<<" "<< g_memoscip.VarLb[i]<<endl;
                     }
@@ -713,9 +771,10 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
                 cout<<"NODE DELETE Adding cut "<<name<<" with rhs "<<rhs_ctr<<" and "<<NewVar.size()<< " variables vs Original vars "<< g_memoscip.nOriginalVar<< endl;
 
             assert(NewVar.size()==NewCoefs.size());
-            assert(NewVar.size()!=0);
+            // A proof whose coefficients all cancel (e.g. c*(x + aux) >= c reduced to 0 >= 0) is trivial: its rhs is only rounding noise
+            assert(!NewVar.empty() || rhs_ctr <= 1e-6*max(1.0,fabs(rhs_summed)));
             // Learning level 4 learns at every node; otherwise only at nodes with two children whose proof is useful
-            if(g_options.learning==4 || (children.size()==2 && (g_options.learning==3 || nodeInfo.lb_increase>0 || (g_memoscip.nodeInfoMap[parentNumber].lb_increase==0 && (g_memoscip.nodeInfoMap[children[0]].lb_increase>0 || g_memoscip.nodeInfoMap[children[1]].lb_increase>0 ))) ))
+            if(!NewVar.empty() && (g_options.learning==4 || (children.size()==2 && (g_options.learning==3 || nodeInfo.lb_increase>0 || (g_memoscip.nodeInfoMap[parentNumber].lb_increase==0 && (g_memoscip.nodeInfoMap[children[0]].lb_increase>0 || g_memoscip.nodeInfoMap[children[1]].lb_increase>0 ))) )))
                 SCIP_CALL( SCIPqueueCut(scip, name,
                                 (int)NewVar.size(),
                                 NewVar.data(),
@@ -731,9 +790,9 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
         nodeInfo.DualProofCoef.second=rhs_summed;
         nodeInfo.DualProofInds=Inds;
         nodeInfo.DualProofCoef.first=Coefs;
-        assert(nodeInfo.lb_increase<=rhs_summed || !nodeInfo.NodeConsistency.empty());
+        assert(nodeInfo.lb_increase<=rhs_summed+1e-6*max(1.0,fabs(rhs_summed)) || !nodeInfo.NodeConsistency.empty());
         nodeInfo.lb_increase=rhs_summed;
-        assert(Myceil(g_memoscip.nodeInfoMap[parentNumber].lb + nodeInfo.lb_increase) >= SCIPgetPrimalbound(scip)-1 ||SCIPgetPrimalbound(scip)==SCIPinfinity(scip) );
+        assert(Myceil(g_memoscip.nodeInfoMap[parentNumber].lb + nodeInfo.lb_increase) >= MyPrimalbound(scip)-1 ||SCIPisInfinity(scip, MyPrimalbound(scip)) );
         eraseChildren(nodenumber, children);
     }
     return SCIP_OKAY;
@@ -906,6 +965,17 @@ static vector<int> explainUbChange(SCIP_VAR* var, SCIP_VAR** vars, SCIP_Real* co
     return explanation;
 }
 
+/** Records that the variable of AllVars index idx is removed by bound propagation with the given explanation,
+ *  unless it was already removed and explained at this node: in encoding 1 a tuple variable fixed to 0 can be the
+ *  reason why another tuple variable of its group is fixed to 1, and its new explanation would then contain itself. */
+static void addBPRemoval(NodeInfo& ninfo, int idx, const vector<int>& explanation)
+{
+    const bool alreadyRemoved = std::any_of(ninfo.BPRemoval.begin(), ninfo.BPRemoval.end(),
+        [idx](const std::pair<int, vector<int>>& removal){ return removal.first == idx; });
+    if(!alreadyRemoved)
+        ninfo.BPRemoval.push_back({idx, explanation});
+}
+
 /** Returns true if prop is reduced cost filtering (used for node consistency). */
 static bool isReducedCostFiltering(SCIP_PROP* prop)
 {
@@ -961,7 +1031,7 @@ static void handleLbChanged(SCIP* scip, SCIP_NODE* node, SCIP_Longint nodenumber
                             cout<<"Explanation LB for "<<SCIPvarGetName(var)<<" "<<explanation.size()<<endl;
                         // The auxiliary variable(s) of var are removed by bound propagation
                         NodeInfo& ninfo = g_memoscip.nodeInfoMap[nodenumber];
-                        forEachAuxVar(pos, true, [&](int aux){ ninfo.BPRemoval.push_back({aux, explanation}); });
+                        forEachAuxVar(pos, true, [&](int aux){ addBPRemoval(ninfo, aux, explanation); });
                     }
                 }
                 break;
@@ -974,7 +1044,7 @@ static void handleLbChanged(SCIP* scip, SCIP_NODE* node, SCIP_Longint nodenumber
                     printReducedCostFiltering(scip, node, ParentNumber, var, reason);
                     // The auxiliary variable(s) of var are removed by reduced cost filtering
                     forEachAuxVar(pos, true, [&](int aux){
-                        ninfo.NodeConsistency.push_back({aux,SCIPgetPrimalbound(scip)-g_memoscip.nodeInfoMap[ParentNumber].lb});
+                        ninfo.NodeConsistency.push_back({aux,MyPrimalbound(scip)-g_memoscip.nodeInfoMap[ParentNumber].lb});
                     });
                     assert(!isSlackVar(var));
                 }
@@ -1011,7 +1081,7 @@ static void handleUbChanged(SCIP* scip, SCIP_NODE* node, SCIP_Longint nodenumber
                         if(g_options.verbosity > 3)
                             cout<<"ExplanationUB for "<<SCIPvarGetName(var)<<" "<<explanation.size()<<" "<<ninfo.BPRemoval.size()<<endl;
                         // var itself is removed by bound propagation
-                        ninfo.BPRemoval.push_back({allVarsIndex(var), explanation});
+                        addBPRemoval(ninfo, allVarsIndex(var), explanation);
                     }
                 }
                 break;
@@ -1027,7 +1097,7 @@ static void handleUbChanged(SCIP* scip, SCIP_NODE* node, SCIP_Longint nodenumber
                     printReducedCostFiltering(scip, node, ParentNumber, var, reason);
                     assert(!isSlackVar(var));
                     // var itself is removed by reduced cost filtering
-                    ninfo.NodeConsistency.push_back({allVarsIndex(var),SCIPgetPrimalbound(scip)-g_memoscip.nodeInfoMap[ParentNumber].lb});
+                    ninfo.NodeConsistency.push_back({allVarsIndex(var),MyPrimalbound(scip)-g_memoscip.nodeInfoMap[ParentNumber].lb});
                 }
                 break;
             }

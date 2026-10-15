@@ -24,6 +24,12 @@ using namespace std;
 /** Adds weight * row to the proof row. */
 static SCIP_RETCODE addRowToProof(SCIP* scip, SCIP_AGGRROW* proofrow, SCIP_ROW* row, SCIP_Real weight)
 {
+    // A row relaxed to one side in a dive is added through its finite side
+    if( isDiveRelaxedRow(row) )
+    {
+        SCIP_CALL( SCIPaggrRowAddRow(scip, proofrow, row, weight, SCIPisInfinity(scip, row->rhs) ? -1 : +1) );
+        return SCIP_OKAY;
+    }
     if( weight < 0.0 )
     {
         assert(-row->lhs<=g_memoscip.TOP);
@@ -66,6 +72,27 @@ void printProof(SCIP* scip, const vector<SCIP_Real>& coefs, const char* relation
 }
 
 
+void dropNegligibleCoefs(SCIP* scip, vector<SCIP_Real>& coefs, SCIP_Real& rhs)
+{
+    SCIP_Real maxabs = 0.0;
+    for (SCIP_Real c : coefs)
+        maxabs = max(maxabs, fabs(c));
+    const SCIP_Real tol = 1e-9 * maxabs;
+    for (size_t i = 0; i < coefs.size(); ++i)
+    {
+        const SCIP_Real c = coefs[i];
+        if(c == 0.0 || fabs(c) >= tol)
+            continue;
+        // c*x_i >= min(c*lb, c*ub) globally, so dropping c*x_i requires rhs -= max(c*lb, c*ub)
+        SCIP_VAR* var = g_memoscip.AllVars[i];
+        const SCIP_Real bound = c > 0 ? SCIPvarGetUbGlobal(var) : SCIPvarGetLbGlobal(var);
+        if(SCIPisInfinity(scip, fabs(bound)))
+            continue;
+        rhs -= c * bound;
+        coefs[i] = 0.0;
+    }
+}
+
 vector<SCIP_Real> FusionResolution(SCIP* scip, SCIP_Longint child0, SCIP_Longint child1)
 {
     const NodeInfo& info0 = g_memoscip.nodeInfoMap[child0];
@@ -78,7 +105,7 @@ vector<SCIP_Real> FusionResolution(SCIP* scip, SCIP_Longint child0, SCIP_Longint
     {
         int idx = info0.DualProofInds[i];
         SCIP_Real coef = info0.DualProofCoef.first[i];
-        if(!SCIPisDualfeasZero(scip,coef) && idx != g_memoscip.AuxVar[shiftedIndex(g_memoscip.AllVars[info0.BranchVar])])
+        if(coef != 0.0 && idx != g_memoscip.AuxVar[shiftedIndex(g_memoscip.AllVars[info0.BranchVar])])
             FusCoef[idx]=max(coef,0.0);
     }
 
@@ -87,7 +114,7 @@ vector<SCIP_Real> FusionResolution(SCIP* scip, SCIP_Longint child0, SCIP_Longint
     {
         int idx = info1.DualProofInds[i];
         SCIP_Real coef = info1.DualProofCoef.first[i];
-        if(!SCIPisDualfeasZero(scip,coef) && idx != g_memoscip.AuxVar[shiftedIndex(g_memoscip.AllVars[info1.BranchVar])])
+        if(coef != 0.0 && idx != g_memoscip.AuxVar[shiftedIndex(g_memoscip.AllVars[info1.BranchVar])])
             FusCoef[idx]=max(FusCoef[idx],coef);
     }
 
@@ -261,6 +288,7 @@ SCIP_RETCODE FinishLearn(SCIP* scip, SCIP_Longint nodenumber){
     printProof(scip, ResFus, ">=", rhs_summed, true);
 
     checkSummedRhs(nodenumber, children, rhs_summed);
+    dropNegligibleCoefs(scip, ResFus, rhs_summed);
 
     if(rhs_summed>0 && g_options.learning==1 && rhs_summed < g_memoscip.TOP){
         char name[100];
@@ -268,7 +296,7 @@ SCIP_RETCODE FinishLearn(SCIP* scip, SCIP_Longint nodenumber){
 
         for (size_t i = 0; i < ResFus.size(); i++)
         {
-            if(!SCIPisDualfeasZero(scip,ResFus[i])){
+            if(ResFus[i] != 0.0){
                 NewInds.push_back(i);
                 NewCoefs.push_back(ResFus[i]);
                 NewVar.push_back(g_memoscip.AllVars[i]);
@@ -280,8 +308,10 @@ SCIP_RETCODE FinishLearn(SCIP* scip, SCIP_Longint nodenumber){
             cout<<"Adding cut "<<name<<" with rhs "<<rhs_summed<<" and "<<NewVar.size()<< " variables"<<endl;
 
         assert(NewVar.size()==NewCoefs.size());
-        assert(NewVar.size()!=0);
-        SCIP_CALL( SCIPqueueCut(scip, name,
+        // A proof whose coefficients all cancel (e.g. c*(x + aux) >= c reduced to 0 >= 0) is trivial: its rhs is only rounding noise
+        assert(!NewVar.empty() || rhs_summed <= 1e-6);
+        if(!NewVar.empty())
+            SCIP_CALL( SCIPqueueCut(scip, name,
                         (int)NewVar.size(),
                         NewVar.data(),
                         NewCoefs.data(),
@@ -296,9 +326,9 @@ SCIP_RETCODE FinishLearn(SCIP* scip, SCIP_Longint nodenumber){
     node.DualProofCoef.second=rhs_summed;
     node.DualProofInds=NewInds;
     node.DualProofCoef.first=NewCoefs;
-    assert(node.lb_increase<=rhs_summed || !node.NodeConsistency.empty());
+    assert(node.lb_increase<=rhs_summed+1e-6*max(1.0,fabs(rhs_summed)) || !node.NodeConsistency.empty());
     node.lb_increase=rhs_summed;
-    assert(ceil(g_memoscip.nodeInfoMap[parentNumber].lb + node.lb_increase+1e-5) >= SCIPgetPrimalbound(scip));
+    assert(Myceil(g_memoscip.nodeInfoMap[parentNumber].lb + node.lb_increase) >= MyPrimalbound(scip));
     eraseChildren(nodenumber, children);
 
     return SCIP_OKAY;
@@ -360,7 +390,7 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
         int idx = allVarsIndex(var);
 
         redcost[idx]=redc;
-        if(!SCIPisDualfeasZero(scip,redc)){
+        if(redc != 0.0){
             if(g_memoscip.VarUb[idx]==0)
                 newy_i[idx]=0;
             else if(g_memoscip.VarLb[idx]==1)
@@ -403,8 +433,9 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
                     cout << "Row " << SCIProwGetName(rows[i]) <<" Idew "<< SCIProwGetIndex(rows[i])<<" i "<<i<<" dualsol "<<collector.dualsol[i]<<" "<<dual<<" Age: " << SCIProwGetAge(rows[i])<<endl;
             }
             assert(fabs(dual)<1e6);
-            if(fabs(dual)  > 1e-7   && SCIProwGetRhs(rows[i]) != SCIPinfinity(scip)){
-                sumdual+=dual*SCIProwGetRhs(rows[i]);
+            const SCIP_Real rowValue = equalityRowValue(scip, rows[i]);
+            if(dual != 0.0 && rowValue != SCIPinfinity(scip)){
+                sumdual+=dual*rowValue;
                 SCIP_CALL( addRowToProof(scip, proofrow, rows[i], dual) );
             }
             if(g_options.debug){
@@ -473,7 +504,7 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
             TrueTempCoef[i]+=SCIPaggrRowGetProbvarValue(Trueproofrow, SCIPvarGetProbindex(var));
         }
 
-        if(!SCIPisDualfeasZero(scip,diffy_i[i]) && g_memoscip.VarUb[i]!=SCIPinfinity(scip) ){
+        if(diffy_i[i] != 0.0 && g_memoscip.VarUb[i]!=SCIPinfinity(scip) ){
             TempCoef[i]+=diffy_i[i];
             forEachAuxVar(shiftedIndex(var), true, [&](int aux){ TempCoef[aux]+=diffy_i[i]; });
             sumdual+=diffy_i[i];
@@ -497,6 +528,9 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
         cout<<"TRUEDUAL proof"<<endl;
         printProof(scip, TrueTempCoef, ">=", Truesumdual, true);
     }
+    // The reduced costs use the exact coefficients, the stored proof the safely cleaned ones
+    vector<SCIP_Real> ProofCoef=TempCoef;
+    dropNegligibleCoefs(scip, ProofCoef, sumdual);
     assert(!parentredcost.empty());
     for(size_t i = 0; i < nAllVars; ++i )
     {
@@ -509,8 +543,9 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
         if(g_memoscip.VarLb[i]==g_memoscip.VarUb[i]){
             redcost[i]=0;
         }
-        if(SCIPisDualfeasZero(scip,coef))
+        if(ProofCoef[i] == 0.0)
             continue;
+        coef = ProofCoef[i];
         node.DualProofCoef.first.push_back(coef);
         node.DualProofInds.push_back(i);
 
@@ -538,7 +573,7 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
         cout<<collector.objval<<" "<<parentInfo.lb<<" Truesumdual "<<Truesumdual<<" "<<Truesumdual-collector.objval<<endl;
         cout<<"DIFF Objval "<<collector.objval-parentInfo.lb<<" versus sumdiffdual "<<sumdual<<endl;
     }
-    assert(fabs(collector.objval-sumdual-parentInfo.lb) < 1e-1|| collector.objval>= SCIPgetPrimalbound(scip));
+    assert(fabs(collector.objval-sumdual-parentInfo.lb) <= 1e-6*max(1.0,fabs(collector.objval)) || Myceil(collector.objval)>= MyPrimalbound(scip));
 
     SCIPaggrRowFree(scip, &proofrow);
     if(Trueproofrow != nullptr)
@@ -608,6 +643,8 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
 
                 if(SCIProwGetRhs(rows[i])==SCIProwGetLhs(rows[i]))
                     SCIP_CALL( SCIPaggrRowAddRow(scip, proofrow, rows[i], rowFarkas[i], negated ? -1 : 1) );
+                else if(isDiveRelaxedRow(rows[i]))  // equality whose slack column is not in the LP: use its finite side
+                    SCIP_CALL( SCIPaggrRowAddRow(scip, proofrow, rows[i], rowFarkas[i], SCIPisInfinity(scip, SCIProwGetRhs(rows[i])) ? -1 : 1) );
                 else
                     assert(SCIProwGetName(rows[i])[0]=='s' && SCIProwGetName(rows[i])[1]=='c');
             }
@@ -636,6 +673,12 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
                 }
             }
         }
+        char nameprobsol[50];
+        snprintf(nameprobsol, 50, "inf.lp");
+        SCIP_CALL( SCIPwriteLP(scip, nameprobsol) );
+        snprintf(nameprobsol, 50, "inflp.lp");
+        SCIP_CALL( SCIPwriteTransProblem(scip, nameprobsol,"lp",FALSE) );
+        cout<<testup<<" "<<SCIPaggrRowGetRhs(proofrow)<<endl;
         assert(testup<SCIPaggrRowGetRhs(proofrow));
         if(g_options.debug){
             // Learned cut rows end with their slack variable
@@ -728,7 +771,7 @@ SCIP_RETCODE getDualProofFromPseudoObjCutoff(
             diffy[i]=y_i[i]-parentInfo.y_i[i];
         }
     }
-    assert(obj >= SCIPgetPrimalbound(scip));
+    assert(Myceil(obj) >= MyPrimalbound(scip));
 
     SCIP_Real sumdual=0;
     SCIP_AGGRROW* proofrow = nullptr;
@@ -752,8 +795,9 @@ SCIP_RETCODE getDualProofFromPseudoObjCutoff(
                 cout << "Row " << SCIProwGetName(rows[i]) << " Idew "<< SCIProwGetIndex(rows[i]) <<" i "<<i<<" Age: " << SCIProwGetAge(rows[i])<<" "<<" dualsol "<<g_memoscip.collector.dualsol[i]<<" parent "<<parentInfo.DualSol[idx]<<" "<<dual<<" sumdual "<<sumdual<<endl;
             }
             assert(fabs(dual)<1e6);
-            if(fabs(SCIProwGetRhs(rows[i])*dual)  > 1e-7   && SCIProwGetRhs(rows[i]) != SCIPinfinity(scip)){
-                sumdual+=dual*SCIProwGetRhs(rows[i]);
+            const SCIP_Real rowValue = equalityRowValue(scip, rows[i]);
+            if(dual != 0.0 && rowValue != SCIPinfinity(scip)){
+                sumdual+=dual*rowValue;
                 SCIP_CALL( addRowToProof(scip, proofrow, rows[i], dual) );
             }
         }else {
@@ -768,20 +812,21 @@ SCIP_RETCODE getDualProofFromPseudoObjCutoff(
         SCIP_VAR* var = g_memoscip.AllVars[i];
         TempCoef[i]+=SCIPaggrRowGetProbvarValue(proofrow, SCIPvarGetProbindex(var));
 
-        if(!SCIPisDualfeasZero(scip,diffy[i]) && g_memoscip.VarUb[i]!=SCIPinfinity(scip) ){
+        if(diffy[i] != 0.0 && g_memoscip.VarUb[i]!=SCIPinfinity(scip) ){
             TempCoef[i]+=diffy[i];
             forEachAuxVar(shiftedIndex(var), true, [&](int aux){ TempCoef[aux]+=diffy[i]; });
             sumdual+=diffy[i];
         }
     }
     SCIPaggrRowFree(scip, &proofrow);
-    assert(SCIPisDualfeasZero(scip,obj-sumdual-parentInfo.lb));
+    assert(fabs(obj-sumdual-parentInfo.lb) <= 1e-6*max(1.0,fabs(obj)));
+    dropNegligibleCoefs(scip, TempCoef, sumdual);
 
     NodeInfo& node = g_memoscip.nodeInfoMap[nodeNumber];
     for(size_t i = 0; i < nAllVars; ++i )
     {
         SCIP_Real coef = TempCoef[i];
-        if(SCIPisDualfeasZero(scip,coef))
+        if(coef == 0.0)
             continue;
         node.DualProofCoef.first.push_back(coef);
         node.DualProofInds.push_back(i);

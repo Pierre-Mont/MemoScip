@@ -67,6 +67,7 @@ struct MemoSCIPContext {
     std::vector<SCIP_VAR*> OrderVar;
     std::string FileExt;
     std::vector<SCIP_CONS*> Unconstructed_cons; //Constraint added to the problem but not yet added in the LP
+    std::vector<SCIP_ROW*> DiveRelaxedRows; //Learned cut rows relaxed to one side in the current dive because their slack column is not in the LP
 
 
     long long TOP = 1e+9;
@@ -102,6 +103,24 @@ inline int shiftedIndex(SCIP_VAR* var)
 inline int allVarsIndex(SCIP_VAR* var)
 {
     return g_memoscip.CurrentVarIdx[shiftedIndex(var)];
+}
+
+/** True if row is a learned cut row relaxed to one side in the current dive (its slack column is not in the LP). */
+inline bool isDiveRelaxedRow(SCIP_ROW* row)
+{
+    for (SCIP_ROW* r : g_memoscip.DiveRelaxedRows)
+        if (r == row)
+            return true;
+    return false;
+}
+
+/** Value of the equality "row = value" used in the proofs: the rhs, or for a row relaxed in the dive its remaining
+ *  finite side, which is the value of the original equality (the slack term is kept in the aggregation). */
+inline SCIP_Real equalityRowValue(SCIP* scip, SCIP_ROW* row)
+{
+    if (isDiveRelaxedRow(row) && SCIPisInfinity(scip, SCIProwGetRhs(row)))
+        return SCIProwGetLhs(row);
+    return SCIProwGetRhs(row);
 }
 
 /** Slack variables are recognised by their name: "slack_*", "sc_*", or the transformed "t_slack_*", "t_sc_*". */

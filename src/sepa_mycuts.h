@@ -44,4 +44,6 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
 void includeMycutsSeparator(SCIP* scip);
 
 SCIP_Longint Myceil(double val);
+/** Primal bound rounded down to an integer, tolerating values slightly above it (integer objective). */
+SCIP_Real MyPrimalbound(SCIP* scip);
 #endif

@@ -163,6 +163,22 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
         return parse_float_suffix("-m", s + 2, out.minInc, errMsg);
     }
 
+    if (matches_value_flag(s, "-ub", true))
+    {
+        const char* rest = s + 3;
+        if (*rest == '=')
+            ++rest;
+        char* end = nullptr;
+        out.initialUB = std::strtod(rest, &end);
+        if (end == rest || *end != '\0')
+        {
+            errMsg = "-ub requires a numeric value (e.g. -ub=9996)";
+            return false;
+        }
+        out.hasInitialUB = true;
+        return true;
+    }
+
     if (matches_value_flag(s, "-bo"))
         return parse_int_flag(s, "-bo", "-bo requires an integer value (e.g. -bo=1 or -bo1)", out.branchingOrder, errMsg);
 
@@ -234,6 +250,7 @@ void print_memoscip_usage(const char* programName)
         << "  -b=N       Branching heuristic (0=custom, 3=relpscost, 4=replay from Instance/branch_replay_sequence.txt)\n"
         << "  -bo=N      Branching order (integer, default 1)\n"
         << "  -w=N       Weaken constraints (0 = no weakening, 1 = weaken constraints)\n"
+        << "  -ub=F      Initial primal bound: objective limit F (only solutions strictly better are accepted)\n"
         << "  -pc=N      Pseudo objective cutoff proof (0 = always dive, 1 = use pseudo objective proof, default 1)\n"
         << "\n"
         << "Examples:\n"

@@ -31,6 +31,9 @@ struct MemoSCIPRunOptions {
     int nbslack = 1000; // Number of slack variables 
     /** Maximum time limit in seconds (0 = no limit). */
     int timelimit = 0;
+    /** Initial primal bound given as objective limit (-ub); only used if hasInitialUB. */
+    bool hasInitialUB = false;
+    double initialUB = 0.0;
 
     int branchingHeuristic = 0;  //0: first fraction, 1+: fallback SCIP branching, 3: relpscost, 4: replay from Instance/branch_replay_sequence.txt
 

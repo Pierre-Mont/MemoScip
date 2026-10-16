@@ -395,6 +395,11 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
                 newy_i[idx]=0;
             else if(g_memoscip.VarLb[idx]==1)
                 newy_i[idx]=redc;
+            else if(g_memoscip.VarUb[idx]==SCIPinfinity(scip)){
+                // No upper bound constraint, hence no bound dual: a negative reduced cost can only be dual infeasibility noise
+                assert(redc > -1e-6);
+                newy_i[idx]=0;
+            }
             else
                 newy_i[idx]=min(redc,0.0);
             assert(!isSlackVar(g_memoscip.AllVars[idx]) || newy_i[idx]==0);

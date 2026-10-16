@@ -405,6 +405,9 @@ int main(int argc, char** argv)
             cout << "Time limit set to " << g_options.timelimit << " seconds" << endl;
     }
 
+    if (g_options.hasInitialUB)
+        SCIP_CALL( SCIPsetObjlimit(scip, g_options.initialUB) );
+
     SCIP_CALL(SCIPsolve(scip));
     if(g_options.finish_Learn)
         FinishLearn(scip, 1);
@@ -416,7 +419,8 @@ int main(int argc, char** argv)
     printStatistics(scip);
     if(g_options.verbosity > 2)
         SCIP_CALL( printSolution(scip) );
-
+    //Print SCIP statistics
+    //SCIP_CALL( SCIPprintStatistics(scip, NULL) );
     // Cleanup: clear per-node bookkeeping map
     g_memoscip.nodeInfoMap.clear();
     SCIP_CALL(SCIPfree(&scip));

@@ -353,6 +353,12 @@ int main(int argc, char** argv)
             std::cerr << "Error reading KPCG instance: " << rerr << std::endl;
             return 1;
         }
+    } else if (fileext == ".xml" || (filepath.size() > 7 && filepath.compare(filepath.size() - 7, 7, ".xml.xz") == 0)) {
+        std::string rerr;
+        if (!readXCSPInstance(scip, filepath, g_options.encoding, rerr)) {
+            std::cerr << "Error reading XCSP instance: " << rerr << std::endl;
+            return 1;
+        }
     } else {
         SCIP_CALL(SCIPreadProb(scip, filepath.c_str(), NULL));
     }

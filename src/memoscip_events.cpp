@@ -12,6 +12,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -121,7 +122,7 @@ bool ensure_replay_loaded()
 /* Node solved                                                                                                       */
 /* ---------------------------------------------------------------------------------------------------------------- */
 
-/** Initialises AllVars, CurrentVarIdx, VarLb, VarUb, AuxVar and TupleAuxVar from the columns of the first LP. */
+/** Initialises AllVars, CurrentVarIdx, VarLb, VarUb and AuxVar from the columns of the first LP. */
 static void initVarIndexMaps(SCIP* scip)
 {
     int nconss = SCIPgetNConss(scip);
@@ -137,8 +138,7 @@ static void initVarIndexMaps(SCIP* scip)
     g_memoscip.CurrentVarIdx.resize(maxindex+1-ncols,0);
     g_memoscip.VarLb.resize(ncols,0);
     g_memoscip.VarUb.resize(ncols,1);
-    g_memoscip.AuxVar.resize(maxindex+1-ncols,-1);
-    g_memoscip.TupleAuxVar.resize(maxindex+1-ncols);
+    g_memoscip.AuxVar.resize(maxindex+1-ncols);
 
     for( int i = 0; i < ncols; i++ )
     {
@@ -152,11 +152,11 @@ static void initVarIndexMaps(SCIP* scip)
             g_memoscip.VarUb[i]=SCIPvarGetUbLocal(var);
 
         // By default a variable is its own auxiliary variable
-        if(g_memoscip.AuxVar[pos(var)]==-1)
-            g_memoscip.AuxVar[pos(var)]=pos(var);
+        if(g_memoscip.AuxVar[pos(var)].empty())
+            g_memoscip.AuxVar[pos(var)]={pos(var)};
     }
 
-    // Domain constraints x_i0 + x_i1 = 1 link each variable to its auxiliary variable
+    // Domain constraints sum_j x_ij = 1 link each variable x_ij to its auxiliary variables x_ik, k != j
     bool foundAuxVars=false;
     for(int i = 0; i < nconss; ++i)
     {
@@ -164,21 +164,28 @@ static void initVarIndexMaps(SCIP* scip)
         SCIP_VAR** vars = SCIPgetVarsLinear(scip,cons);
         int nvars = SCIPgetNVarsLinear(scip,cons);
         const char* consname = SCIPconsGetName(cons);
-        if((g_memoscip.FileExt==".opb" && consname[0]=='u' && consname[1]=='b')
-            || ((g_memoscip.FileExt==".lp" || g_options.kpcg) && SCIPgetRhsLinear(scip, cons)==1 && nvars==2)){
-            g_memoscip.AuxVar[pos(vars[0])]=g_memoscip.CurrentVarIdx[pos(vars[1])];
-            g_memoscip.AuxVar[pos(vars[1])]=g_memoscip.CurrentVarIdx[pos(vars[0])];
-            foundAuxVars=true;
-        }
-        // Encoding 1: each tuple variable of a constraint sum of 4 tuples = 1 is linked to the 3 other ones
-        if(g_options.encoding==1 && SCIPgetRhsLinear(scip, cons)==1 && nvars==4){
-            for(int k = 0; k < 4; ++k){
-                vector<int>& others = g_memoscip.TupleAuxVar[pos(vars[k])];
+        const bool sumIsOne = SCIPgetRhsLinear(scip, cons)==1 && SCIPgetLhsLinear(scip, cons)==1;
+        // Domain constraints of any size are recognised by their name (internal readers and wcsp2lp)
+        const bool namedDomain = sumIsOne && nvars>=2 && strncmp(consname, "domain_constraint", 17)==0;
+        // The vars of each sum constraint linked to the other vars of the constraint (overwrites a previous link)
+        auto linkOthers = [&](vector<vector<int>>& links){
+            for(int k = 0; k < nvars; ++k){
+                vector<int>& others = links[pos(vars[k])];
                 others.clear();
-                for(int j = 0; j < 4; ++j)
+                for(int j = 0; j < nvars; ++j)
                     if(j != k)
                         others.push_back(g_memoscip.CurrentVarIdx[pos(vars[j])]);
             }
+        };
+        if(namedDomain
+            || (g_memoscip.FileExt==".opb" && consname[0]=='u' && consname[1]=='b')
+            || ((g_memoscip.FileExt==".lp" || g_options.kpcg) && SCIPgetRhsLinear(scip, cons)==1 && nvars==2)){
+            linkOthers(g_memoscip.AuxVar);
+            foundAuxVars=true;
+        }
+        // Encoding 1: the tuple sum constraint is the domain constraint of its tuple variables
+        else if(g_options.encoding==1 && sumIsOne && (nvars==4 || strncmp(consname, "tuple_", 6)==0)){
+            linkOthers(g_memoscip.AuxVar);
         }
     }
     if(!foundAuxVars)
@@ -362,8 +369,9 @@ SCIP_DECL_EVENTEXEC(eventExecNodeSolved)
             cout<<"lperror "<<lperror<<" cutoff "<<cutoff<<" stat2 "<<stat2<<endl;
             cout<<"LP SOLVED EVENT with status "<<stat2<<" node "<<nodenumber<<endl;
             char nameprobsol[50];
-            snprintf(nameprobsol, 50, "infeasible%s_%lld.lp", g_options.instancePath.c_str(), nodenumber);
+            snprintf(nameprobsol, 50, "infeasible_%lld.lp", nodenumber);
             SCIP_CALL( SCIPwriteTransProblem(scip, nameprobsol,"lp",FALSE) );
+            snprintf(nameprobsol, 50, "infeasiblelp_%lld.lp", nodenumber);
             SCIP_CALL( SCIPwriteLP(scip, nameprobsol) );
             assert(1==0);
         }
@@ -492,7 +500,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeFocused)
         ninfo.parent=parentNumber;
     }
 
-    // The branching variable is the variable fixed to 1 at this node (the auxiliary variable of a variable fixed to 0)
+    // The branching variable of this node and the value (0 or 1) it is fixed to
     SCIP_DOMCHG* domchg = SCIPnodeGetDomchg(node);
     int nboundchgs = SCIPdomchgGetNBoundchgs(domchg);
     for(int i = 0; i < nboundchgs; ++i )
@@ -500,10 +508,8 @@ SCIP_DECL_EVENTEXEC(eventExecNodeFocused)
         SCIP_BOUNDCHG* boundchg = SCIPdomchgGetBoundchg(domchg, i);
         SCIP_VAR* var = SCIPboundchgGetVar(boundchg);
         SCIP_Real newbound = SCIPboundchgGetNewbound(boundchg);
-        if(newbound==1.0)
-            ninfo.BranchVar = shiftedIndex(var);
-        else
-            ninfo.BranchVar = g_memoscip.AuxVar[shiftedIndex(var)];
+        ninfo.BranchVar = shiftedIndex(var);
+        ninfo.BranchVal = newbound==1.0;
     }
     assert(g_memoscip.VarLb.size()==g_memoscip.VarUb.size());
 
@@ -511,8 +517,8 @@ SCIP_DECL_EVENTEXEC(eventExecNodeFocused)
         for (size_t i = 0; i < g_memoscip.VarLb.size(); i++)
         {
             SCIP_VAR* var= g_memoscip.AllVars[i];
-            assert(SCIPvarGetLbLocal(var)==g_memoscip.VarLb[i] || SCIPvarGetUbLocal(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[g_memoscip.AuxVar[shiftedIndex(var)]]])==0);
-            assert(SCIPvarGetUbLocal(var)==g_memoscip.VarUb[i] ||  SCIPvarGetUbLocal(var)==SCIPinfinity(scip) || SCIPvarGetLbLocal(g_memoscip.AllVars[g_memoscip.AuxVar[shiftedIndex(var)]])==1);
+            assert(SCIPvarGetLbLocal(var)==g_memoscip.VarLb[i] || anyAuxVar(shiftedIndex(var), [](int aux){ return SCIPvarGetUbLocal(g_memoscip.AllVars[aux])==0; }));
+            assert(SCIPvarGetUbLocal(var)==g_memoscip.VarUb[i] ||  SCIPvarGetUbLocal(var)==SCIPinfinity(scip) || anyAuxVar(shiftedIndex(var), [](int aux){ return SCIPvarGetLbLocal(g_memoscip.AllVars[aux])==1; }));
             (void)var;
         }
     }
@@ -526,7 +532,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeFocused)
         g_memoscip.nodeInfoMap[parentNumber].children.push_back(SCIPnodeGetNumber(node));
     }
     if(nodenumber!=1 && g_options.verbosity >= 1)
-        cout<<"Depth "<<SCIPnodeGetDepth(node)<<" Node "<<nodenumber<<" lb: "<<g_memoscip.nodeInfoMap[parentNumber].lb<<" ub: "<<SCIPgetPrimalbound(scip)<<" Dec Var: "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[ninfo.BranchVar]])<<" nb added ctrs : "<<g_memoscip.nbAddedctr<<" nb nodes " <<SCIPgetNTotalNodes(scip)<<endl;
+        cout<<"Depth "<<SCIPnodeGetDepth(node)<<" Node "<<nodenumber<<" lb: "<<g_memoscip.nodeInfoMap[parentNumber].lb<<" ub: "<<SCIPgetPrimalbound(scip)<<" Dec Var: "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[ninfo.BranchVar]])<<" = "<<ninfo.BranchVal<<" nb added ctrs : "<<g_memoscip.nbAddedctr<<" nb nodes " <<SCIPgetNTotalNodes(scip)<<endl;
     if(g_options.verbosity > 1)
         cout<<"-------------------------------------ENDOFCUS EVENT ----------------"<<endl;
     if(g_options.verbosity > 3){
@@ -542,31 +548,20 @@ SCIP_DECL_EVENTEXEC(eventExecNodeFocused)
 /* ---------------------------------------------------------------------------------------------------------------- */
 
 /** Removes from coefs the common part of the coefficient of literal i and of its complementary literal(s)
- *  (auxiliary variable, then tuple variables in encoding 1), decreasing rhs accordingly.
- *  If checkVarTuple, the tuple reduction is only done when literal i belongs to a tuple constraint. */
-static void reduceComplementaryCoefs(SCIP* scip, vector<SCIP_Real>& coefs, size_t i, SCIP_Real& rhs, bool checkVarTuple)
+ *  (auxiliary variables), decreasing rhs accordingly: they sum to 1. */
+static void reduceComplementaryCoefs(SCIP* scip, vector<SCIP_Real>& coefs, size_t i, SCIP_Real& rhs)
 {
-    const int aux = g_memoscip.AuxVar[i];
-    if((int)i!= aux && !SCIPisDualfeasZero(scip,coefs[aux])){
-        if(coefs[i]!= 0 && coefs[aux]!=0){
-            SCIP_Real minval = min(coefs[i],coefs[aux]);
-            rhs -= minval;
-            coefs[i]-=minval;
-            coefs[aux]-=minval;
-            assert(coefs[i]==0 || coefs[aux]==0);
-        }
-    }
-
-    if(g_options.encoding==1 && (checkVarTuple ? !g_memoscip.TupleAuxVar[i].empty() : !g_memoscip.TupleAuxVar.empty())){
-        const vector<int>& tuple = g_memoscip.TupleAuxVar[i];
+    const vector<int>& auxs = g_memoscip.AuxVar[i];
+    const bool ownAux = auxs.size()==1 && auxs[0]==(int)i;
+    if(!ownAux && coefs[i]!= 0 && allAuxVars(i, [&](int aux){ return coefs[aux]!=0 && !SCIPisDualfeasZero(scip,coefs[aux]); })){
         SCIP_Real minval = coefs[i];
-        for (int j = 0; j < (int)tuple.size(); j++)
-            minval = min(minval, coefs[tuple[j]]);
+        for (int aux : auxs)
+            minval = min(minval, coefs[aux]);
         rhs -= minval;
         coefs[i]-=minval;
-        coefs[tuple[0]]-=minval;
-        coefs[tuple[1]]-=minval;
-        coefs[tuple[2]]-=minval;
+        for (int aux : auxs)
+            coefs[aux]-=minval;
+        assert(coefs[i]==0 || anyAuxVar(i, [&](int aux){ return coefs[aux]==0; }));
     }
 }
 
@@ -577,6 +572,10 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
     SCIP_EVENTTYPE eventtype = SCIPeventGetType(event);
 
     if( eventtype != SCIP_EVENTTYPE_NODEDELETE )
+        return SCIP_OKAY;
+
+    // When the solve stops early (time or node limit), the open nodes are freed without being processed: nothing to learn
+    if( SCIPgetStage(scip) != SCIP_STAGE_SOLVING || SCIPisStopped(scip) )
         return SCIP_OKAY;
 
     SCIP_NODE* node = SCIPeventGetNode(event);
@@ -592,7 +591,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
         cout<<"Deleting node "<<nodenumber<<" from nodeInfoMap, scip Node Lb "<< SCIPgetNodeLowerbound(scip,node)  <<" my node lb : "<<nodeInfo.lb<< " "<<" depth : "<<SCIPgetDepth(scip)<< " parent: "<<parentNumber<<endl;
         cout<<"UB "<<SCIPgetPrimalbound(scip)<<endl;
         cout<<"number of children "<<nodeInfo.children.size()<<endl;
-        cout<<"Bracnh var "<<nodeInfo.BranchVar<<" "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[nodeInfo.BranchVar]])<<endl;
+        cout<<"Bracnh var "<<nodeInfo.BranchVar<<" "<<SCIPvarGetName(g_memoscip.AllVars[g_memoscip.CurrentVarIdx[nodeInfo.BranchVar]])<<" = "<<nodeInfo.BranchVal<<endl;
         cout<<"Curnnet node lb increase "<<nodeInfo.lb_increase<<" versus children "<<endl;
     }
 
@@ -603,7 +602,6 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
             int nvars;
             // First query the required size with branchvarssize = 0
             SCIPnodeGetParentBranchings(node, NULL, NULL, NULL, &nvars, 0);
-            assert(nvars==1);
             int decvar;
             if(g_options.verbosity > 3)
                 cout<<"case node cutted of parentNumber "<<SCIP_parentNumber<<endl;
@@ -623,6 +621,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
                     assert(SCIPvarGetName(vars[i]) == SCIPvarGetName(g_memoscip.AllVars[decvar]));
                     assert(bounds[i]==1);
                     nodeInfo.BranchVar= shiftedIndex(vars[i]);
+                    nodeInfo.BranchVal= true;
                 }
             }
 
@@ -639,6 +638,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
 
         vector<SCIP_Real> ResFus(g_memoscip.AllVars.size(),0.0);
         SCIP_Real rhsFus=0;
+        bool infeasibleFusion=false;
         if(children.size()==1){
             checkSingleChildProof(nodenumber, children[0]);
         }
@@ -647,7 +647,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
                 for(long child : children)
                     cout<<"Two children "<<child<<" lb "<<g_memoscip.nodeInfoMap[child].lb<<" versus parent lb "<<nodeInfo.lb<<" "<<g_memoscip.nodeInfoMap[child].DualProofCoef.first.size()<<" "<<g_memoscip.nodeInfoMap[child].DualProofCoef.second<<" incr lb "<<g_memoscip.nodeInfoMap[child].lb_increase<<endl;
             }
-            SCIP_CALL( fuseChildrenProofs(scip, nodenumber, children, ResFus, rhsFus) );
+            SCIP_CALL( fuseChildrenProofs(scip, nodenumber, children, ResFus, rhsFus, infeasibleFusion) );
         }else{
             if(g_options.verbosity > 2)
                 cout<<"No child "<<endl;
@@ -664,7 +664,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
         vector<SCIP_VAR*> NewVar;
 
         // Learning level 2: learn the fused proof of the children alone
-        if(rhs_summed>0 && g_options.learning==2 && rhs_summed < g_memoscip.TOP){
+        if(rhs_summed>0 && g_options.learning==2 && !isInfeasibilityRhs(rhs_summed)){
             char name[100];
             snprintf(name, 100, "l2cut_%lld_%d", nodenumber,SCIPgetDepth(scip));
             SCIP_Real rhs_ctr=rhs_summed;
@@ -673,7 +673,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
             // Reduce first, then collect: a tuple reduction can raise the coefficient of an already visited variable
             for (size_t i = 0; i < ResFus2.size(); i++)
                 if(ResFus2[i] != 0.0)
-                    reduceComplementaryCoefs(scip, ResFus2, i, rhs_ctr, true);
+                    reduceComplementaryCoefs(scip, ResFus2, i, rhs_ctr);
             dropNegligibleCoefs(scip, ResFus2, rhs_ctr);
             for (size_t i = 0; i < ResFus2.size(); i++)
             {
@@ -704,14 +704,14 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
         }
 
         assert(fabs(nodeInfo.DualProofCoef.second-nodeInfo.lb_increase)<1e-5);
-
+        bool print = nodenumber == 9999;
         addNodeProof(nodenumber, ResFus, rhs_summed);
-        if(g_options.verbosity > 2){
+        if(g_options.verbosity > 2 || print){
             cout<<"mid res "<<endl;
             printProof(scip, ResFus, ">=", rhs_summed, true);
         }
         applyBoundPropagationRemovals(nodenumber, ResFus, rhs_summed);
-        if(g_options.verbosity > 2){
+        if(g_options.verbosity > 2 || print){
             cout<<"mid222 res "<<endl;
             printProof(scip, ResFus, ">=", rhs_summed, true);
         }
@@ -722,13 +722,13 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
             printProof(scip, ResFus, ">=", rhs_summed, true);
         }
 
-        checkSummedRhs(nodenumber, children, rhs_summed);
-         if(g_options.verbosity > 2){
+        checkSummedRhs(nodenumber, children, rhs_summed, infeasibleFusion);
+         if(g_options.verbosity > 2 || print){
             cout<<"final2 res "<<endl;
             printProof(scip, ResFus, ">=", rhs_summed, true);
         }
         dropNegligibleCoefs(scip, ResFus, rhs_summed);
-         if(g_options.verbosity > 2){
+         if(g_options.verbosity > 2 || print){
             cout<<"drop res "<<endl;
             printProof(scip, ResFus, ">=", rhs_summed, true);
         }
@@ -743,7 +743,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
                 assert( i >= g_memoscip.nodeInfoMap[parentNumber].redcosts.size() || ResFus[i]- g_memoscip.nodeInfoMap[parentNumber].redcosts[i]<1e-3 || g_memoscip.VarUb[i] == 0);
             }
         }
-        if(rhs_summed>0  && rhs_summed < g_memoscip.TOP){
+        if(rhs_summed>0  && !isInfeasibilityRhs(rhs_summed)){
             char name[100];
             snprintf(name, 100, "cut_%lld_%d", nodenumber,SCIPgetDepth(scip));
             SCIP_Real rhs_ctr=rhs_summed;
@@ -751,10 +751,10 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
             for (size_t i = 0; i < ResFus.size(); i++)
             {
                 if(ResFus[i] != 0.0){
-                    assert(g_options.encoding==0 || g_memoscip.TupleAuxVar[i].empty() || g_memoscip.TupleAuxVar[i].size() == 3);
-                    reduceComplementaryCoefs(scip, ResFus, i, rhs_ctr, true);
+                    reduceComplementaryCoefs(scip, ResFus, i, rhs_ctr);
                 }
             }
+            dropNegligibleCoefs(scip, ResFus, rhs_ctr);
             for (size_t i = 0; i < ResFus.size(); i++)
             {
                 if(ResFus[i] != 0.0){
@@ -882,13 +882,15 @@ SCIP_BDCHGINFO* getBoundChangeReasonDetailed(SCIP* scip, SCIP_VAR* var,
     return info;
 }
 
-/** Asserts that the stored bounds of v match its local bounds, unless its auxiliary variable is fixed. */
+/** Asserts that the stored bounds of v match its local bounds, unless one of its auxiliary variables is fixed. */
 static void assertStoredBounds(SCIP_VAR* v)
 {
-    SCIP_VAR* auxv = g_memoscip.AllVars[g_memoscip.AuxVar[shiftedIndex(v)]];
-    assert(g_memoscip.VarLb[allVarsIndex(v)]==SCIPvarGetLbLocal(v) || (SCIPvarGetLbLocal(auxv)==SCIPvarGetUbLocal(auxv)));
-    assert(g_memoscip.VarUb[allVarsIndex(v)]==SCIPvarGetUbLocal(v) || (SCIPvarGetLbLocal(auxv)==SCIPvarGetUbLocal(auxv)));
-    (void)auxv;
+    [[maybe_unused]] const bool auxFixed = anyAuxVar(shiftedIndex(v), [](int aux){
+        SCIP_VAR* auxv = g_memoscip.AllVars[aux];
+        return SCIPvarGetLbLocal(auxv)==SCIPvarGetUbLocal(auxv);
+    });
+    assert(g_memoscip.VarLb[allVarsIndex(v)]==SCIPvarGetLbLocal(v) || auxFixed);
+    assert(g_memoscip.VarUb[allVarsIndex(v)]==SCIPvarGetUbLocal(v) || auxFixed);
 }
 
 static void printConstraintReason(SCIP_CONS* cons)
@@ -925,7 +927,7 @@ static vector<int> explainLbChange(SCIP_VAR* var, SCIP_VAR** vars, SCIP_Real* co
         if(sameSign && g_memoscip.VarUb[allVarsIndex(v)]==0)
             explanation.push_back(allVarsIndex(v));
         if(oppositeSign && g_memoscip.VarLb[allVarsIndex(v)]==1)
-            forEachAuxVar(shiftedIndex(v), true, [&](int aux){ explanation.push_back(aux); });
+            forEachAuxVar(shiftedIndex(v), [&](int aux){ explanation.push_back(aux); });
     }
     return explanation;
 }
@@ -957,7 +959,7 @@ static vector<int> explainUbChange(SCIP_VAR* var, SCIP_VAR** vars, SCIP_Real* co
                 cout<<SCIPvarGetName(v)<<" "<<coefs[i]<<" "<<SCIPvarGetLbLocal(v)<<" "<<SCIPvarGetUbLocal(v)<<endl;
         }
         if(sameSign && g_memoscip.VarLb[allVarsIndex(v)]==1){
-            forEachAuxVar(shiftedIndex(v), false, [&](int aux){ explanation.push_back(aux); });
+            forEachAuxVar(shiftedIndex(v), [&](int aux){ explanation.push_back(aux); });
             if(g_options.verbosity > 3 )
                 cout<<"Auxvar "<<SCIPvarGetName(v)<<" "<<coefs[i]<<" "<<SCIPvarGetLbLocal(v)<<" "<<SCIPvarGetUbLocal(v)<<endl;
         }
@@ -1000,13 +1002,31 @@ static void handleLbChanged(SCIP* scip, SCIP_NODE* node, SCIP_Longint nodenumber
     assert(!isSlackVar(var));
     const int pos = shiftedIndex(var);
     g_memoscip.VarLb[allVarsIndex(var)]=newbound;
-    bool auxvarassigned=false;
-    if(g_options.encoding==0 || g_memoscip.TupleAuxVar[pos].empty()){
-        // The auxiliary variable is the complement of var
-        const int aux = g_memoscip.AuxVar[pos];
-        auxvarassigned =  g_memoscip.VarUb[aux] == g_memoscip.VarLb[aux];
-        if(newbound==1)
-            g_memoscip.VarUb[aux]=0;
+    // The auxiliary variables are the other values of the domain of var: var = 1 is implied when they are all assigned to 0
+    const vector<int>& auxs = g_memoscip.AuxVar[pos];
+    const bool auxvarassigned = allAuxVars(pos, [](int aux){ return g_memoscip.VarUb[aux] == 0; });
+    // Only the auxiliary variables that were not already assigned to 0 are removed by this bound change: one already
+    // assigned to 0 keeps its own reason (and can be part of the explanation of this change)
+    vector<int> removedAuxs;
+    for (int aux : auxs)
+        if(aux!=allVarsIndex(var) && g_memoscip.VarUb[aux]!=0)
+            removedAuxs.push_back(aux);
+    // When two values of a domain are fixed to 1 (broken domain constraint, detected by the LP), each keeps ub 1:
+    // the implied ub 0 is only stored for the values that are not fixed to 1
+    if(newbound==1)
+        g_memoscip.VarUb[allVarsIndex(var)]=1;
+    else if(anyAuxVar(pos, [&](int aux){ return aux!=allVarsIndex(var) && g_memoscip.VarLb[aux]==1; }))
+        g_memoscip.VarUb[allVarsIndex(var)]=0;
+    for (int aux : auxs){
+        if(aux==allVarsIndex(var))  // a variable outside any domain constraint is its own auxiliary variable
+            continue;
+        if(newbound==1){
+            if(g_memoscip.VarLb[aux]!=1)
+                g_memoscip.VarUb[aux]=0;
+        }
+        else if(auxs.size()>1)
+            // var is free again, but another value may still be removed at this node: use its own local bound
+            g_memoscip.VarUb[aux]=SCIPvarGetUbLocal(g_memoscip.AllVars[aux]);
         else if(newbound==0)
             g_memoscip.VarUb[aux]=1;
         else
@@ -1031,7 +1051,8 @@ static void handleLbChanged(SCIP* scip, SCIP_NODE* node, SCIP_Longint nodenumber
                             cout<<"Explanation LB for "<<SCIPvarGetName(var)<<" "<<explanation.size()<<endl;
                         // The auxiliary variable(s) of var are removed by bound propagation
                         NodeInfo& ninfo = g_memoscip.nodeInfoMap[nodenumber];
-                        forEachAuxVar(pos, true, [&](int aux){ addBPRemoval(ninfo, aux, explanation); });
+                        for (int aux : removedAuxs)
+                            addBPRemoval(ninfo, aux, explanation);
                     }
                 }
                 break;
@@ -1043,9 +1064,8 @@ static void handleLbChanged(SCIP* scip, SCIP_NODE* node, SCIP_Longint nodenumber
                     SCIP_Longint ParentNumber=ninfo.parent;
                     printReducedCostFiltering(scip, node, ParentNumber, var, reason);
                     // The auxiliary variable(s) of var are removed by reduced cost filtering
-                    forEachAuxVar(pos, true, [&](int aux){
+                    for (int aux : removedAuxs)
                         ninfo.NodeConsistency.push_back({aux,MyPrimalbound(scip)-g_memoscip.nodeInfoMap[ParentNumber].lb});
-                    });
                     assert(!isSlackVar(var));
                 }
                 break;
@@ -1064,9 +1084,9 @@ static void handleUbChanged(SCIP* scip, SCIP_NODE* node, SCIP_Longint nodenumber
         cout<<"UB CHANGED "<<SCIPvarGetName(var)<<" "<<oldbound<<" ->"<<newbound<<endl;
 
     const int pos = shiftedIndex(var);
-    bool auxvarassigned=false;
-    if(g_memoscip.AuxVar[pos] != -1)
-        auxvarassigned =  g_memoscip.VarUb[g_memoscip.AuxVar[pos]] == g_memoscip.VarLb[g_memoscip.AuxVar[pos]];
+    // var = 0 is implied by the domain constraint when another value is assigned to 1 (or all of them are assigned)
+    const bool auxvarassigned = anyAuxVar(pos, [](int aux){ return g_memoscip.VarLb[aux] == 1; })
+        || allAuxVars(pos, [](int aux){ return g_memoscip.VarUb[aux] == g_memoscip.VarLb[aux]; });
     SCIP_BDCHGINFO* reason = getBoundChangeReasonDetailed(scip, var, SCIP_BOUNDTYPE_UPPER, oldbound, newbound);
     if(reason!=NULL && !auxvarassigned){
         switch (SCIPbdchginfoGetChgtype(reason)) {
@@ -1113,13 +1133,17 @@ static void handleUbChanged(SCIP* scip, SCIP_NODE* node, SCIP_Longint nodenumber
         g_memoscip.VarUb[idx]=newbound;
     }else if(newbound==SCIPinfinity(scip) || newbound==1){
         g_memoscip.VarUb[idx]=1;
-        if(g_options.encoding==0 || g_memoscip.TupleAuxVar[pos].empty())
-            g_memoscip.VarLb[g_memoscip.AuxVar[pos]]=0;
+        // var can take value 1, hence none of its other values is assigned to 1
+        for (int aux : g_memoscip.AuxVar[pos])
+            if(aux!=idx)  // a variable outside any domain constraint is its own auxiliary variable
+                g_memoscip.VarLb[aux]=0;
     }else{
         g_memoscip.VarUb[idx]=newbound;
         assert(newbound==0);
-        if(g_options.encoding==0 || g_memoscip.TupleAuxVar[pos].empty())
-            g_memoscip.VarLb[g_memoscip.AuxVar[pos]]=1;
+        // Only a binary domain forces the other value to 1; larger domains are propagated by SCIP
+        const vector<int>& auxs = g_memoscip.AuxVar[pos];
+        if(auxs.size()==1 && auxs[0]!=idx)
+            g_memoscip.VarLb[auxs[0]]=1;
     }
 }
 

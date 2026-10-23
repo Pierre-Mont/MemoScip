@@ -10,7 +10,7 @@
  *  rhs is relaxed with the global bound of each dropped variable, so the proof stays valid. */
 void dropNegligibleCoefs(SCIP* scip, std::vector<SCIP_Real>& coefs, SCIP_Real& rhs);
 
-std::vector<SCIP_Real> FusionResolution(SCIP* scip, SCIP_Longint child0, SCIP_Longint child1);
+std::vector<SCIP_Real> FusionResolution(SCIP* scip, SCIP_Longint child0, SCIP_Longint child1, SCIP_Real& rhs);
 SCIP_RETCODE FinishLearn(SCIP* scip, SCIP_Longint node);
 SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber);
 
@@ -30,9 +30,16 @@ SCIP_RETCODE writeNodeLPFilesIfRequested(SCIP* scip, SCIP_Longint nodenumber);
 /** Debug checks on the proof of the only child of a node. */
 void checkSingleChildProof(SCIP_Longint nodenumber, SCIP_Longint child);
 
-/** If both children increased the lower bound, fuses their proofs into ResFus with right-hand side rhsFus. */
+/** True if rhs is the rhs of an infeasibility proof (TOP, possibly lowered by dropNegligibleCoefs). */
+bool isInfeasibilityRhs(SCIP_Real rhs);
+
+/** Queues the clause sum x_i >= 1 over the TOP literals of the infeasibility proof sum coefs[i] x_i >= rhs. */
+SCIP_RETCODE queueInfeasibilityClause(SCIP* scip, SCIP_Longint nodenumber, std::vector<SCIP_Real> coefs, SCIP_Real rhs);
+
+/** If both children increased the lower bound, fuses their proofs into ResFus with right-hand side rhsFus.
+ *  infeasibleFusion is set if the fused proof proves the node infeasible; its clause version is then learned. */
 SCIP_RETCODE fuseChildrenProofs(SCIP* scip, SCIP_Longint nodenumber, const std::vector<long>& children,
-    std::vector<SCIP_Real>& ResFus, SCIP_Real& rhsFus);
+    std::vector<SCIP_Real>& ResFus, SCIP_Real& rhsFus, bool& infeasibleFusion);
 
 /** Adds the node's own dual proof (if it increased the lower bound) to ResFus and rhs_summed. */
 void addNodeProof(SCIP_Longint nodenumber, std::vector<SCIP_Real>& ResFus, SCIP_Real& rhs_summed);
@@ -45,7 +52,8 @@ void applyNodeConsistency(SCIP* scip, SCIP_Longint nodenumber, SCIP_Longint pare
     std::vector<SCIP_Real>& ResFus, SCIP_Real& rhs_summed);
 
 /** Debug check (option -d) that rhs_summed matches the lower bound increases of the node and its children. */
-void checkSummedRhs(SCIP_Longint nodenumber, const std::vector<long>& children, SCIP_Real rhs_summed);
+void checkSummedRhs(SCIP_Longint nodenumber, const std::vector<long>& children, SCIP_Real rhs_summed,
+    bool infeasibleFusion);
 
 /** Removes the children of nodenumber from nodeInfoMap. */
 void eraseChildren(SCIP_Longint nodenumber, const std::vector<long>& children);

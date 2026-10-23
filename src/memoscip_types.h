@@ -28,7 +28,8 @@ struct NodeInfo {
     bool visited = false;
     bool LPsolved = false;
     std::vector<long> children;
-    int BranchVar = 0;
+    int BranchVar = 0;  // shifted index of the branching variable of this node
+    bool BranchVal = true;  // true if BranchVar is fixed to 1 at this node, false if it is fixed to 0
     std::string Status = "Unknown";
     bool LbgUb = false;
 
@@ -56,8 +57,7 @@ struct MemoSCIPContext {
     int nbAddedctr = 0;
     int nOriginalVar = 0;
     std::unordered_map<SCIP_Longint, NodeInfo> nodeInfoMap;
-    std::vector<int> AuxVar;  //Auxiliary variable index. AuxVar[i] = index of the auxilliary variable in AllVars.
-    std::vector<std::vector<int>> TupleAuxVar; //Auxilliary variables indices for tuple variables (Encoding=1)
+    std::vector<std::vector<int>> AuxVar;  //Auxiliary variable indices. AuxVar[i] = AllVars indices of the other variables of the exactly-one constraint of i (domain constraint, or tuple sum in encoding 1: sum_j x_j = 1).
     std::vector<SCIP_VAR*> AllVars; //Contains all variables including auxiliary and slack variables. Always same ordering.
     std::vector<int> CurrentVarIdx; //Transforms SCIP index to AllVars index. CurrentVarIdx[SCIPvarGetIndex(var)-g_memoscip.nOriginalVar] = index in AllVars
     MyQueue CutQueue;
@@ -93,7 +93,7 @@ struct ScopedTimer {
     ~ScopedTimer() { acc += std::chrono::steady_clock::now() - start; }
 };
 
-/** SCIP index of var shifted by nOriginalVar: position of var in CurrentVarIdx, AuxVar and TupleAuxVar. */
+/** SCIP index of var shifted by nOriginalVar: position of var in CurrentVarIdx and AuxVar. */
 inline int shiftedIndex(SCIP_VAR* var)
 {
     return SCIPvarGetIndex(var) - g_memoscip.nOriginalVar;
@@ -130,20 +130,34 @@ inline bool isSlackVar(SCIP_VAR* var)
     return name[0] == 's' || name[2] == 's';
 }
 
-/** Calls f on the AllVars index of each literal complementary to the variable at shifted index pos:
- *  its auxiliary variable, or the other variables of its tuple constraint when encoding 1 is used.
- *  If checkVarTuple, a variable that belongs to no tuple constraint falls back to its auxiliary variable;
- *  otherwise the fallback only happens when the whole TupleAuxVar table is empty. */
+/** Calls f on the AllVars index of each literal complementary to the variable at shifted index pos: its auxiliary
+ *  variables, i.e. the other variables of its domain constraint or of its tuple sum constraint. */
 template <class F>
-inline void forEachAuxVar(int pos, bool checkVarTuple, F&& f)
+inline void forEachAuxVar(int pos, F&& f)
 {
-    const bool useTuple = g_options.encoding != 0
-        && (checkVarTuple ? !g_memoscip.TupleAuxVar[pos].empty() : !g_memoscip.TupleAuxVar.empty());
-    if (!useTuple)
-        f(g_memoscip.AuxVar[pos]);
-    else
-        for (int aux : g_memoscip.TupleAuxVar[pos])
-            f(aux);
+    for (int aux : g_memoscip.AuxVar[pos])
+        f(aux);
+}
+
+/** True if pred holds for at least one auxiliary variable (AllVars index) of the variable at shifted index pos. */
+template <class P>
+inline bool anyAuxVar(int pos, P&& pred)
+{
+    for (int aux : g_memoscip.AuxVar[pos])
+        if (pred(aux))
+            return true;
+    return false;
+}
+
+/** True if the variable at shifted index pos has auxiliary variables and pred holds for all of them. */
+template <class P>
+inline bool allAuxVars(int pos, P&& pred)
+{
+    const std::vector<int>& auxs = g_memoscip.AuxVar[pos];
+    for (int aux : auxs)
+        if (!pred(aux))
+            return false;
+    return !auxs.empty();
 }
 
 #endif

@@ -246,7 +246,7 @@ void print_memoscip_usage(const char* programName)
         << "  -s=N       Number of slack variables\n"
         << "  -p         Profiling / reserved for future use\n"
         << "  -kpcg      Treat input as KPCG instance and use internal reader\n"
-        << "  -encoding=<n>  KPCG encoding: 0 = direct, nonzero = tuple\n"
+        << "  -encoding=<n>  KPCG/XCSP encoding: 0 = direct, nonzero = tuple\n"
         << "  -b=N       Branching heuristic (0=custom, 3=relpscost, 4=replay from Instance/branch_replay_sequence.txt)\n"
         << "  -bo=N      Branching order (integer, default 1)\n"
         << "  -w=N       Weaken constraints (0 = no weakening, 1 = weaken constraints)\n"

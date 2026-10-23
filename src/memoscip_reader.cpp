@@ -17,6 +17,7 @@
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 using namespace std;
@@ -333,6 +334,209 @@ bool readKPCGInstance(SCIP* scip, const std::string& path, int encoding, std::st
         char cname[128];
         snprintf(cname, sizeof(cname), "domain_constraint_%d", idx);
         if (!addLinearCons(scip, cname, 2, consvars, coefs, 1.0, 1.0, "domain constraint", err))
+            return false;
+    }
+
+    return true;
+}
+
+/** Returns the value of attribute `name` in the XML start tag `tag`, or an empty string. */
+static string xmlAttr(const string& tag, const string& name)
+{
+    string key = " " + name + "=\"";
+    size_t a = tag.find(key);
+    if (a == string::npos) return "";
+    a += key.size();
+    size_t b = tag.find('"', a);
+    return b == string::npos ? "" : tag.substr(a, b - a);
+}
+
+/** Calls f(starttag, body) for each element <elem ...>body</elem> or <elem .../> of the document. */
+template <class F>
+static void forEachXmlElement(const string& doc, const string& elem, F&& f)
+{
+    string open = "<" + elem + " ";
+    string close = "</" + elem + ">";
+    size_t pos = 0;
+    while ((pos = doc.find(open, pos)) != string::npos) {
+        size_t end = doc.find('>', pos);
+        if (end == string::npos) return;
+        string tag = doc.substr(pos, end - pos + 1);
+        string body;
+        if (doc[end - 1] != '/') {
+            size_t cend = doc.find(close, end);
+            if (cend == string::npos) return;
+            body = doc.substr(end + 1, cend - end - 1);
+            end = cend;
+        }
+        f(tag, body);
+        pos = end + 1;
+    }
+}
+
+bool readXCSPInstance(SCIP* scip, const std::string& path, int encoding, std::string& err)
+{
+    if (scip == nullptr) {
+        err = "SCIP pointer is null";
+        return false;
+    }
+
+    auto stream = open_instance_file(path, err);
+    if (!stream) {
+        return false;
+    }
+    string doc((std::istreambuf_iterator<char>(*stream)), std::istreambuf_iterator<char>());
+
+    // domains: list of integers and/or intervals a..b
+    unordered_map<string, vector<int>> domains;
+    forEachXmlElement(doc, "domain", [&](const string& tag, const string& body) {
+        vector<int>& values = domains[xmlAttr(tag, "name")];
+        istringstream iss(body);
+        string tok;
+        while (iss >> tok) {
+            size_t dots = tok.find("..");
+            if (dots == string::npos) values.push_back(stoi(tok));
+            else for (int v = stoi(tok.substr(0, dots)); v <= stoi(tok.substr(dots + 2)); ++v) values.push_back(v);
+        }
+    });
+
+    // variables
+    vector<string> varnames;
+    vector<const vector<int>*> vardom;
+    unordered_map<string, int> varidx;
+    bool ok = true;
+    forEachXmlElement(doc, "variable", [&](const string& tag, const string&) {
+        auto it = domains.find(xmlAttr(tag, "domain"));
+        if (it == domains.end()) { err = "Unknown domain for variable " + xmlAttr(tag, "name"); ok = false; return; }
+        varidx[xmlAttr(tag, "name")] = (int)varnames.size();
+        varnames.push_back(xmlAttr(tag, "name"));
+        vardom.push_back(&it->second);
+    });
+    if (!ok) return false;
+    if (varnames.empty()) {
+        err = "No variables found in instance file";
+        return false;
+    }
+
+    // relations: list of value pairs, either supports or conflicts
+    struct Relation { bool supports; vector<pair<int,int>> tuples; };
+    unordered_map<string, Relation> relations;
+    forEachXmlElement(doc, "relation", [&](const string& tag, const string& body) {
+        if (xmlAttr(tag, "arity") != "2") { err = "Only binary relations are supported"; ok = false; return; }
+        Relation& rel = relations[xmlAttr(tag, "name")];
+        rel.supports = xmlAttr(tag, "semantics") == "supports";
+        string tuples = body;
+        replace(tuples.begin(), tuples.end(), '|', ' ');
+        istringstream iss(tuples);
+        int a, b;
+        while (iss >> a >> b) rel.tuples.emplace_back(a, b);
+    });
+    if (!ok) return false;
+
+    // x<i>_<v> = 1 iff variable i takes value v
+    vector<vector<SCIP_VAR*>> vars(varnames.size());
+    vector<unordered_map<int,int>> valpos(varnames.size());
+    for (size_t i = 0; i < varnames.size(); ++i) {
+        for (int v : *vardom[i]) {
+            char name[64];
+            snprintf(name, sizeof(name), "x%zu_%d", i, v);
+            SCIP_VAR* var = nullptr;
+            if (!addBinaryVar(scip, name, 0.0, var, err)) return false;
+            valpos[i][v] = (int)vars[i].size();
+            vars[i].push_back(var);
+            // the problem keeps a reference to the variable, the pointer stays valid
+            SCIPreleaseVar(scip, &var);
+        }
+    }
+
+    // constraints: encoding 0 adds x<i>_<a> + x<j>_<b> <= 1 for each forbidden pair (a, b), otherwise one
+    // tuple variable per pair of values is created and the forbidden ones are fixed to 0
+    int k = 0;
+    forEachXmlElement(doc, "constraint", [&](const string& tag, const string&) {
+        if (!ok) return;
+        istringstream scope(xmlAttr(tag, "scope"));
+        string sx, sy, extra;
+        if (!(scope >> sx >> sy) || (scope >> extra)) { err = "Only binary constraints are supported"; ok = false; return; }
+        auto itx = varidx.find(sx), ity = varidx.find(sy);
+        auto itr = relations.find(xmlAttr(tag, "reference"));
+        if (itx == varidx.end() || ity == varidx.end() || itx->second == ity->second || itr == relations.end()) {
+            err = "Invalid scope or reference in constraint " + xmlAttr(tag, "name"); ok = false; return;
+        }
+        int i = itx->second, j = ity->second;
+        const Relation& rel = itr->second;
+        size_t di = vars[i].size(), dj = vars[j].size();
+
+        // listed[a][b]: pair (value a of i, value b of j) appears in the relation; values outside the domains are ignored
+        vector<vector<bool>> listed(di, vector<bool>(dj, false));
+        for (auto& t : rel.tuples) {
+            auto pa = valpos[i].find(t.first), pb = valpos[j].find(t.second);
+            if (pa != valpos[i].end() && pb != valpos[j].end()) listed[pa->second][pb->second] = true;
+        }
+        auto forbidden = [&](size_t a, size_t b) { return listed[a][b] != rel.supports; };
+
+        char cname[128];
+        if (encoding == 0) {
+            for (size_t a = 0; a < di; ++a)
+                for (size_t b = 0; b < dj; ++b) {
+                    if (!forbidden(a, b)) continue;
+                    SCIP_VAR* consvars[2] = { vars[i][a], vars[j][b] };
+                    SCIP_Real coefs[2] = { 1.0, 1.0 };
+                    snprintf(cname, sizeof(cname), "conflict_%d_%zu_%zu", k, a, b);
+                    if (!addLinearCons(scip, cname, 2, consvars, coefs, -SCIPinfinity(scip), 1.0, "conflict constraint", err)) { ok = false; return; }
+                }
+            ++k;
+            return;
+        }
+
+        // Tuple formulation: t[a][b] = 1 iff x<i> takes its a-th value and x<j> its b-th value
+        vector<vector<SCIP_VAR*>> t(di, vector<SCIP_VAR*>(dj, nullptr));
+        vector<SCIP_VAR*> alltuples;
+        for (size_t a = 0; a < di; ++a)
+            for (size_t b = 0; b < dj; ++b) {
+                char name[128];
+                snprintf(name, sizeof(name), "x%d_%d_x%d_%d", i, (*vardom[i])[a], j, (*vardom[j])[b]);
+                if (!addBinaryVar(scip, name, 0.0, t[a][b], err)) { ok = false; return; }
+                if (forbidden(a, b) && SCIPchgVarUb(scip, t[a][b], 0.0) != SCIP_OKAY) { err = "SCIP error fixing tuple variable"; ok = false; return; }
+                alltuples.push_back(t[a][b]);
+                SCIP_VAR* tv = t[a][b];
+                if (SCIPreleaseVar(scip, &tv) != SCIP_OKAY) { err = "SCIP error releasing tuple variable"; ok = false; return; }
+            }
+
+        // Marginal constraints: each literal is the sum of the tuples containing it. The last value of each variable
+        // is implied by the other marginals, the tuple sum and the domain constraint: keeping it makes the equality
+        // rows linearly dependent and the LP duals non-unique
+        for (size_t a = 0; a + 1 < di; ++a) {
+            vector<SCIP_VAR*> mvars(t[a].begin(), t[a].end());
+            mvars.push_back(vars[i][a]);
+            vector<SCIP_Real> mcoefs(dj, 1.0);
+            mcoefs.push_back(-1.0);
+            snprintf(cname, sizeof(cname), "tuple_%d_i%zu", k, a);
+            if (!addLinearCons(scip, cname, (int)mvars.size(), mvars.data(), mcoefs.data(), 0.0, 0.0, "tuple marginal constraint", err)) { ok = false; return; }
+        }
+        for (size_t b = 0; b + 1 < dj; ++b) {
+            vector<SCIP_VAR*> mvars;
+            for (size_t a = 0; a < di; ++a) mvars.push_back(t[a][b]);
+            mvars.push_back(vars[j][b]);
+            vector<SCIP_Real> mcoefs(di, 1.0);
+            mcoefs.push_back(-1.0);
+            snprintf(cname, sizeof(cname), "tuple_%d_j%zu", k, b);
+            if (!addLinearCons(scip, cname, (int)mvars.size(), mvars.data(), mcoefs.data(), 0.0, 0.0, "tuple marginal constraint", err)) { ok = false; return; }
+        }
+
+        // Exactly one tuple is selected
+        vector<SCIP_Real> sumcoefs(alltuples.size(), 1.0);
+        snprintf(cname, sizeof(cname), "tuple_%d_sum", k);
+        if (!addLinearCons(scip, cname, (int)alltuples.size(), alltuples.data(), sumcoefs.data(), 1.0, 1.0, "tuple sum constraint", err)) { ok = false; return; }
+        ++k;
+    });
+    if (!ok) return false;
+
+    // domain constraints: each variable takes exactly one value
+    for (size_t i = 0; i < vars.size(); ++i) {
+        vector<SCIP_Real> coefs(vars[i].size(), 1.0);
+        char cname[128];
+        snprintf(cname, sizeof(cname), "domain_constraint_%zu", i);
+        if (!addLinearCons(scip, cname, (int)vars[i].size(), vars[i].data(), coefs.data(), 1.0, 1.0, "domain constraint", err))
             return false;
     }
 

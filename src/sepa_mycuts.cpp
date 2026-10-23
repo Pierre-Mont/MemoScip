@@ -210,7 +210,7 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
             continue;
          consvars.push_back(cut.vars[i]);
          consvals.push_back(coef);
-         assert(fabs(coef)<1000000);
+         assert(fabs(coef)<1000000 || coef >= 1e+08);
       }
 
       if(consvars.empty())
@@ -234,9 +234,8 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
       const int slackIdx = SCIPvarGetIndex(slack)-g_memoscip->nOriginalVar;
       g_memoscip->CurrentVarIdx.resize(slackIdx+1);
       g_memoscip->AuxVar.resize(slackIdx+1);
-      g_memoscip->TupleAuxVar.resize(slackIdx+1);
       g_memoscip->CurrentVarIdx[slackIdx] = g_memoscip->AllVars.size()-1;
-      g_memoscip->AuxVar[slackIdx] = g_memoscip->AllVars.size()-1;
+      g_memoscip->AuxVar[slackIdx] = { (int)g_memoscip->AllVars.size()-1 };
       g_memoscip->nbAddedctr++;
 
       // slack's column has no valid LP position until flushed; needed before evaluating cut efficacy against the LP solution

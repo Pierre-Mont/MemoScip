@@ -237,32 +237,22 @@ static SCIP_RETCODE processNodeLP(SCIP* scip, SCIP_LPSOLSTAT stat, SCIP_Longint 
     return SCIP_OKAY;
 }
 
-/** AllVars index of the variable fixed to 1 by the branching decision that created node,
- *  or -1 if node was not created by a single branching x >= 1. */
-static int getBranchingVarFixedTo1(SCIP_NODE* node)
+/** AllVars indices of the variables fixed to 1 at the focus node (stored lower bounds). */
+static vector<int> localVarsFixedTo1()
 {
-    int nvars;
-    // First query the required size with branchvarssize = 0
-    SCIPnodeGetParentBranchings(node, NULL, NULL, NULL, &nvars, 0);
-    if(nvars != 1)
-        return -1;
-    SCIP_VAR* var;
-    SCIP_Real bound;
-    SCIP_BOUNDTYPE boundtype;
-    SCIPnodeGetParentBranchings(node, &var, &bound, &boundtype, &nvars, 1);
-    if(boundtype != SCIP_BOUNDTYPE_LOWER || bound != 1)
-        return -1;
-    return allVarsIndex(var);
+    vector<int> fixedTo1;
+    for (size_t i = 0; i < g_memoscip.VarLb.size(); i++)
+        if(g_memoscip.VarLb[i]==1 && !isSlackVar(g_memoscip.AllVars[i]))
+            fixedTo1.push_back(i);
+    return fixedTo1;
 }
 
-/** Pseudo objective of the child of parentnumber where AllVars[decVar] is fixed to 1: objective of the variables
- *  fixed to 1 at the parent plus the one of decVar (same value as the proof of getDualProofFromPseudoObjCutoff). */
-static SCIP_Real pseudoObjAfterBranching(SCIP_Longint parentnumber, int decVar)
+/** Objective of the variables fixed to 1 (same value as the proof of getDualProofFromPseudoObjCutoff). */
+static SCIP_Real pseudoObjOf(const vector<int>& fixedTo1)
 {
     SCIP_Real obj = 0;
-    for (int idx : g_memoscip.nodeInfoMap[parentnumber].Var1)
+    for (int idx : fixedTo1)
         obj += SCIPvarGetObj(g_memoscip.AllVars[idx]);
-    obj += SCIPvarGetObj(g_memoscip.AllVars[decVar]);
     return obj;
 }
 
@@ -326,19 +316,19 @@ SCIP_DECL_EVENTEXEC(eventExecNodeSolved)
     SCIP_LPSOLSTAT stat = SCIPgetLPSolstat(scip);
     bool handled;
 
-    // A child whose pseudo objective (objective of the variables fixed to 1) reaches the incumbent is cut off by SCIP
-    // as soon as it is focused, without propagation nor LP: its proof is that pseudo objective, as for the
-    // never-focused nodes handled in eventExecNodeDelete.
-    const int decVar = (stat==SCIP_LPSOLSTAT_NOTSOLVED && nodenumber != 1) ? getBranchingVarFixedTo1(node) : -1;
-    if(g_options.pseudoObjCut != 0 && decVar >= 0 && Myceil(pseudoObjAfterBranching(parentnumber, decVar)) >= MyPrimalbound(scip)){
+    // A node whose pseudo objective (objective of the variables fixed to 1, after the propagation of the node) reaches
+    // the incumbent is cut off by SCIP without LP: its proof is that pseudo objective, as for the never-focused nodes
+    // handled in eventExecNodeDelete. The variables fixed to 1 by propagation are explained by their BP removals.
+    const vector<int> fixedTo1 = (stat==SCIP_LPSOLSTAT_NOTSOLVED && nodenumber != 1) ? localVarsFixedTo1() : vector<int>();
+    if(g_options.pseudoObjCut != 0 && !fixedTo1.empty() && Myceil(pseudoObjOf(fixedTo1)) >= MyPrimalbound(scip)){
         if(g_options.verbosity > 3)
-            cout<<"Node "<<nodenumber<<" cut off by its pseudo objective, decision "<<SCIPvarGetName(g_memoscip.AllVars[decVar])<<endl;
+            cout<<"Node "<<nodenumber<<" cut off by its pseudo objective "<<pseudoObjOf(fixedTo1)<<endl;
         // The LP of a node cut off at focus is not constructed, but the proof needs its rows (weighted by the parent duals)
         if(!SCIPisLPConstructed(scip)){
             SCIP_CALL( SCIPconstructLP(scip, &cutoff) );
         }
         SCIP_CALL( SCIPflushLP(scip) );
-        SCIP_CALL( getDualProofFromPseudoObjCutoff(scip, nodenumber, parentnumber, decVar) );
+        SCIP_CALL( getDualProofFromPseudoObjCutoff(scip, nodenumber, parentnumber, fixedTo1) );
     }else if(stat==SCIP_LPSOLSTAT_NOTSOLVED){
         // The node was decided before its LP was solved (e.g. infeasible by propagation): solve it in a dive to get a proof
         if(g_options.verbosity > 3){
@@ -627,7 +617,10 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
 
             assert(nodeInfo.lb==0);
             assert(SCIP_parentNumber>0);
-            SCIP_CALL(getDualProofFromPseudoObjCutoff(scip,nodenumber, SCIP_parentNumber, decvar));
+            // The node was never focused: its variables fixed to 1 are the ones of its parent plus the branching one
+            vector<int> fixedTo1 = g_memoscip.nodeInfoMap[SCIP_parentNumber].Var1;
+            fixedTo1.push_back(decvar);
+            SCIP_CALL(getDualProofFromPseudoObjCutoff(scip,nodenumber, SCIP_parentNumber, fixedTo1));
             g_memoscip.nodeInfoMap[SCIP_parentNumber].children.push_back(nodenumber);
             return SCIP_OKAY;
         }
@@ -704,14 +697,13 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
         }
 
         assert(fabs(nodeInfo.DualProofCoef.second-nodeInfo.lb_increase)<1e-5);
-        bool print = nodenumber == 9999;
         addNodeProof(nodenumber, ResFus, rhs_summed);
-        if(g_options.verbosity > 2 || print){
+        if(g_options.verbosity > 2){
             cout<<"mid res "<<endl;
             printProof(scip, ResFus, ">=", rhs_summed, true);
         }
         applyBoundPropagationRemovals(nodenumber, ResFus, rhs_summed);
-        if(g_options.verbosity > 2 || print){
+        if(g_options.verbosity > 2){
             cout<<"mid222 res "<<endl;
             printProof(scip, ResFus, ">=", rhs_summed, true);
         }
@@ -723,12 +715,12 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
         }
 
         checkSummedRhs(nodenumber, children, rhs_summed, infeasibleFusion);
-         if(g_options.verbosity > 2 || print){
+         if(g_options.verbosity > 2){
             cout<<"final2 res "<<endl;
             printProof(scip, ResFus, ">=", rhs_summed, true);
         }
         dropNegligibleCoefs(scip, ResFus, rhs_summed);
-         if(g_options.verbosity > 2 || print){
+         if(g_options.verbosity > 2){
             cout<<"drop res "<<endl;
             printProof(scip, ResFus, ">=", rhs_summed, true);
         }

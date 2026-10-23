@@ -828,7 +828,7 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
 //Generate a dual proof when a node was cut off due to pseudo objective higher than UB
 SCIP_RETCODE getDualProofFromPseudoObjCutoff(
     SCIP* scip,
-    SCIP_Longint nodeNumber, SCIP_Longint parentNumber, int decVar)
+    SCIP_Longint nodeNumber, SCIP_Longint parentNumber, const vector<int>& fixedTo1)
 {
     ScopedTimer GetDualProofFromPseudoObjCutoffTimer(g_memoscip.GetDualProofFromPseudoObjCutoffTime);
     if(g_options.verbosity > 3){
@@ -839,14 +839,12 @@ SCIP_RETCODE getDualProofFromPseudoObjCutoff(
     vector<SCIP_Real> y_i(nAllVars,0.0);
     vector<SCIP_Real> diffy(nAllVars,0.0);
 
-    // The pseudo objective of the node is the objective of the variables fixed to 1 (parent ones plus decVar)
+    // The pseudo objective of the node is the objective of the variables fixed to 1
     SCIP_Real obj=0;
-    for (int idx : parentInfo.Var1){
+    for (int idx : fixedTo1){
         y_i[idx] = SCIPvarGetObj(g_memoscip.AllVars[idx]);
         obj += y_i[idx];
     }
-    y_i[decVar] = SCIPvarGetObj(g_memoscip.AllVars[decVar]);
-    obj += y_i[decVar];
     for(size_t i = 0; i < nAllVars; ++i){
         if(i<parentInfo.y_i.size()){
             diffy[i]=y_i[i]-parentInfo.y_i[i];

@@ -18,9 +18,11 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
     SCIP* scip,
     SCIP_Longint nodeNumber);
 
+/** Proof of a node cut off by its pseudo objective: the objective of the variables fixedTo1 (AllVars indices),
+ *  relative to the dual solution of the parent. */
 SCIP_RETCODE getDualProofFromPseudoObjCutoff(
     SCIP* scip,
-    SCIP_Longint nodeNumber, SCIP_Longint parentNumber, int decVar);
+    SCIP_Longint nodeNumber, SCIP_Longint parentNumber, const std::vector<int>& fixedTo1);
 
 /** Writes the LP and the transformed problem of the node when option -o=N is given with N > 1 and node >= N. */
 SCIP_RETCODE writeNodeLPFilesIfRequested(SCIP* scip, SCIP_Longint nodenumber);

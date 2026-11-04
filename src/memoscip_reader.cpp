@@ -374,7 +374,8 @@ static void forEachXmlElement(const string& doc, const string& elem, F&& f)
     }
 }
 
-bool readXCSPInstance(SCIP* scip, const std::string& path, int encoding, std::string& err)
+bool readXCSPInstance(SCIP* scip, const std::string& path, int encoding, std::string& err,
+    std::vector<std::string>* varnames_out)
 {
     if (scip == nullptr) {
         err = "SCIP pointer is null";
@@ -417,6 +418,7 @@ bool readXCSPInstance(SCIP* scip, const std::string& path, int encoding, std::st
         err = "No variables found in instance file";
         return false;
     }
+    if (varnames_out) *varnames_out = varnames;
 
     // relations: list of value pairs, either supports or conflicts
     struct Relation { bool supports; vector<pair<int,int>> tuples; };
@@ -449,8 +451,9 @@ bool readXCSPInstance(SCIP* scip, const std::string& path, int encoding, std::st
         }
     }
 
-    // constraints: encoding 0 adds x<i>_<a> + x<j>_<b> <= 1 for each forbidden pair (a, b), otherwise one
-    // tuple variable per pair of values is created and the forbidden ones are fixed to 0
+    // constraints: encoding 0 adds x<i>_<a> + x<j>_<b> <= 1 for each forbidden pair (a, b) (hard CSP), otherwise
+    // one tuple variable per pair of values is created and the forbidden ones cost 1 (Max-CSP: minimise the number
+    // of violated tuples)
     int k = 0;
     forEachXmlElement(doc, "constraint", [&](const string& tag, const string&) {
         if (!ok) return;
@@ -488,15 +491,14 @@ bool readXCSPInstance(SCIP* scip, const std::string& path, int encoding, std::st
             return;
         }
 
-        // Tuple formulation: t[a][b] = 1 iff x<i> takes its a-th value and x<j> its b-th value
+        // Tuple formulation: t[a][b] = 1 iff x<i> takes its a-th value and x<j> its b-th value, forbidden tuples cost 1
         vector<vector<SCIP_VAR*>> t(di, vector<SCIP_VAR*>(dj, nullptr));
         vector<SCIP_VAR*> alltuples;
         for (size_t a = 0; a < di; ++a)
             for (size_t b = 0; b < dj; ++b) {
                 char name[128];
                 snprintf(name, sizeof(name), "x%d_%d_x%d_%d", i, (*vardom[i])[a], j, (*vardom[j])[b]);
-                if (!addBinaryVar(scip, name, 0.0, t[a][b], err)) { ok = false; return; }
-                if (forbidden(a, b) && SCIPchgVarUb(scip, t[a][b], 0.0) != SCIP_OKAY) { err = "SCIP error fixing tuple variable"; ok = false; return; }
+                if (!addBinaryVar(scip, name, forbidden(a, b) ? 1.0 : 0.0, t[a][b], err)) { ok = false; return; }
                 alltuples.push_back(t[a][b]);
                 SCIP_VAR* tv = t[a][b];
                 if (SCIPreleaseVar(scip, &tv) != SCIP_OKAY) { err = "SCIP error releasing tuple variable"; ok = false; return; }

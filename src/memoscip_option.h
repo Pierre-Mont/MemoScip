@@ -37,7 +37,10 @@ struct MemoSCIPRunOptions {
 
     int branchingHeuristic = 0;  //0: first fraction, 1+: fallback SCIP branching, 3: relpscost, 4: replay from Instance/branch_replay_sequence.txt
 
-    int branchingOrder = 1;    //0: branch on x_{i0} first, 1: branch on x_{i1} first
+    int branchingOrder = -1;   //-1: branch on any value, 0: branch on x_{i0} only, 1: branch on x_{i1} only
+
+    /** Variable ordering file (-order): variables are branched on in this order by the custom branching rule. */
+    std::string orderFile;
 
     int maxCutQueueSize = 0;
 

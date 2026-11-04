@@ -10,6 +10,14 @@
  *  rhs is relaxed with the global bound of each dropped variable, so the proof stays valid. */
 void dropNegligibleCoefs(SCIP* scip, std::vector<SCIP_Real>& coefs, SCIP_Real& rhs);
 
+/** Upper bound of the slack s of the cut row a x - s (+ row constant) = rhs, from the exact LP row: max activity of
+ *  a x + constant - rhs over the global bounds (the bounds of other cut slacks are their implied ones).
+ *  rhs is passed explicitly since the sides of a row are changed in dives. +infinity if unbounded. */
+SCIP_Real slackUbFromRow(SCIP* scip, SCIP_ROW* row, SCIP_Real rhs, SCIP_VAR* slack);
+
+/** Implied upper bound of AllVars[idx] if it is the slack of a learned cut, +infinity otherwise. */
+SCIP_Real getSlackImpliedUb(SCIP* scip, int idx);
+
 std::vector<SCIP_Real> FusionResolution(SCIP* scip, SCIP_Longint child0, SCIP_Longint child1, SCIP_Real& rhs);
 SCIP_RETCODE FinishLearn(SCIP* scip, SCIP_Longint node);
 SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber);

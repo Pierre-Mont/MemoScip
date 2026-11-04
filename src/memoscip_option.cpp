@@ -117,6 +117,16 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
         out.finish_Learn = true;
         return true;
     }
+    if (std::strncmp(s, "-order", 6) == 0)
+    {
+        if (s[6] != '=' || s[7] == '\0')
+        {
+            errMsg = "-order requires a file (e.g. -order=instance.order)";
+            return false;
+        }
+        out.orderFile = s + 7;
+        return true;
+    }
 
     /* flags with a value: -x=N or -xN (checked after the boolean flags, e.g. -sep before -s) */
     if (matches_value_flag(s, "-v"))
@@ -248,7 +258,9 @@ void print_memoscip_usage(const char* programName)
         << "  -kpcg      Treat input as KPCG instance and use internal reader\n"
         << "  -encoding=<n>  KPCG/XCSP encoding: 0 = direct, nonzero = tuple\n"
         << "  -b=N       Branching heuristic (0=custom, 3=relpscost, 4=replay from Instance/branch_replay_sequence.txt)\n"
-        << "  -bo=N      Branching order (integer, default 1)\n"
+        << "  -bo=N      Branching order: -1 = any value (default), 0 = only x_{i0}, 1 = only x_{i1}\n"
+        << "  -order=F   Branch on the variables in the order of file F (names separated by spaces/newlines, '#' comments;\n"
+        << "             an XCSP variable name stands for all its value variables), with the custom branching (-b=0)\n"
         << "  -w=N       Weaken constraints (0 = no weakening, 1 = weaken constraints)\n"
         << "  -ub=F      Initial primal bound: objective limit F (only solutions strictly better are accepted)\n"
         << "  -pc=N      Pseudo objective cutoff proof (0 = always dive, 1 = use pseudo objective proof, default 1)\n"

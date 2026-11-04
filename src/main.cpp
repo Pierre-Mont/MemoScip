@@ -13,8 +13,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 
@@ -244,8 +248,9 @@ static SCIP_RETCODE addOpbDomainConstraints(SCIP* scip, int nvars)
     return SCIP_OKAY;
 }
 
-/** Variables x_{i0} / x_{i1} are named "*_0" / "*_1". The preferred side (-bo) is put in OrderVar for the custom
- *  branching rule; with SCIP branching (-b>=1) the other side gets a low branching priority. */
+/** Variables x_{i0} / x_{i1} are named "*_0" / "*_1". With -bo=0 / -bo=1 only the preferred side is put in OrderVar
+ *  for the custom branching rule, and with SCIP branching (-b>=1) the other side gets a low branching priority.
+ *  By default (-bo=-1) every non-slack variable is put in OrderVar and keeps its branching priority. */
 static SCIP_RETCODE setBranchingOrder(SCIP* scip, vector<SCIP_Real>& objcoefs)
 {
     SCIP_VAR** vars = SCIPgetVars(scip);
@@ -257,7 +262,8 @@ static SCIP_RETCODE setBranchingOrder(SCIP* scip, vector<SCIP_Real>& objcoefs)
         string varname = SCIPvarGetName(v);
         const bool ends0 = varname.ends_with("_0");
         const bool ends1 = varname.ends_with("_1");
-        const bool preferred = (ends0 && g_options.branchingOrder==0) || (ends1 && g_options.branchingOrder==1);
+        const bool preferred = g_options.branchingOrder < 0 ? !isSlackVar(v)
+            : (ends0 && g_options.branchingOrder==0) || (ends1 && g_options.branchingOrder==1);
         const bool other = (ends0 && g_options.branchingOrder==1) || (ends1 && g_options.branchingOrder==0);
         if (g_options.branchingHeuristic >= 1 && other)
         {
@@ -268,6 +274,62 @@ static SCIP_RETCODE setBranchingOrder(SCIP* scip, vector<SCIP_Real>& objcoefs)
         }
     }
     return SCIP_OKAY;
+}
+
+/** Reorders g_memoscip.OrderVar following the order file (-order). Each name is either an XCSP variable (cspVarNames),
+ *  replaced by its value variables x<i>_<v> in increasing value order, or the name of a problem variable. The variables
+ *  of OrderVar that are not listed keep their relative order after the listed ones. */
+static bool applyOrderFile(SCIP* scip, const string& path, const vector<string>& cspVarNames, string& err)
+{
+    ifstream in(path);
+    if (!in.is_open()) {
+        err = "Failed to open order file: " + path;
+        return false;
+    }
+
+    // problem variables by original name ("t_" prefix of the transformed variables removed)
+    SCIP_VAR** vars = SCIPgetVars(scip);
+    int nvars = SCIPgetNVars(scip);
+    unordered_map<string, SCIP_VAR*> byName;
+    vector<vector<SCIP_VAR*>> valueVars(cspVarNames.size());
+    for (int k = 0; k < nvars; ++k) {
+        string name = SCIPvarGetName(vars[k]);
+        if (name.starts_with("t_"))
+            name = name.substr(2);
+        byName[name] = vars[k];
+        // value variable x<i>_<v>
+        int i, v, len = 0;
+        if (sscanf(name.c_str(), "x%d_%d%n", &i, &v, &len) == 2 && len == (int)name.size()
+            && i >= 0 && i < (int)valueVars.size())
+            valueVars[i].push_back(vars[k]);
+    }
+    unordered_map<string, int> cspIndex;
+    for (size_t i = 0; i < cspVarNames.size(); ++i)
+        cspIndex[cspVarNames[i]] = (int)i;
+
+    vector<SCIP_VAR*> ordered;
+    unordered_set<SCIP_VAR*> listed;
+    auto add = [&](SCIP_VAR* v) { if (listed.insert(v).second) ordered.push_back(v); };
+    string line, tok;
+    while (getline(in, line)) {
+        if (!line.empty() && line[0] == '#')
+            continue;
+        istringstream iss(line);
+        while (iss >> tok) {
+            if (auto it = cspIndex.find(tok); it != cspIndex.end())
+                for (SCIP_VAR* v : valueVars[it->second]) add(v);
+            else if (auto jt = byName.find(tok); jt != byName.end())
+                add(jt->second);
+            else {
+                err = "Unknown variable in order file: " + tok;
+                return false;
+            }
+        }
+    }
+    for (SCIP_VAR* v : g_memoscip.OrderVar)
+        add(v);
+    g_memoscip.OrderVar = ordered;
+    return true;
 }
 
 static void printStatistics(SCIP* scip)
@@ -342,6 +404,7 @@ int main(int argc, char** argv)
         fileext = ".lp";
     }
     g_memoscip.FileExt=fileext;
+    vector<string> cspVarNames;  // XCSP variable names, for the order file
     SCIP* scip = nullptr;
     SCIP_CALL(SCIPcreate(&scip));
     SCIP_CALL(SCIPincludeDefaultPlugins(scip));
@@ -355,7 +418,8 @@ int main(int argc, char** argv)
         }
     } else if (fileext == ".xml" || (filepath.size() > 7 && filepath.compare(filepath.size() - 7, 7, ".xml.xz") == 0)) {
         std::string rerr;
-        if (!readXCSPInstance(scip, filepath, g_options.encoding, rerr)) {
+        cout<<"READ XML INSTANCE"<<endl;
+        if (!readXCSPInstance(scip, filepath, g_options.encoding, rerr, &cspVarNames)) {
             std::cerr << "Error reading XCSP instance: " << rerr << std::endl;
             return 1;
         }
@@ -398,6 +462,15 @@ int main(int argc, char** argv)
     // The objective coefficients are the reduced costs of the virtual node 0 (parent of the root)
     vector<SCIP_Real> objcoefs;
     SCIP_CALL( setBranchingOrder(scip, objcoefs) );
+    if (!g_options.orderFile.empty()) {
+        std::string oerr;
+        if (!applyOrderFile(scip, g_options.orderFile, cspVarNames, oerr)) {
+            std::cerr << "Error reading order file: " << oerr << std::endl;
+            return 1;
+        }
+        if (g_options.branchingHeuristic != 0)
+            std::cerr << "Warning: the order file is only used by the custom branching rule (-b=0)" << std::endl;
+    }
     g_memoscip.nodeInfoMap[0].redcosts=objcoefs;
 
     if (g_options.profiling)

@@ -4,12 +4,14 @@
 #include "memoscip_types.h"
 
 #include "scip/cons_linear.h"
+#include "memoscip_dual.h"
 #include "scip/var.h"
 
 #include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <limits>
 
 #define SEPA_NAME              "mycuts"
 #define SEPA_DESC              "separator for queued cuts from events"
@@ -230,6 +232,9 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
       g_memoscip->AllVars.push_back(slack);
       g_memoscip->VarUb.push_back(SCIPinfinity(scip));
       g_memoscip->VarLb.push_back(0);
+      const int slackAllIdx = (int)g_memoscip->AllVars.size()-1;
+      g_memoscip->SlackImpliedUb.resize(g_memoscip->AllVars.size(), std::numeric_limits<SCIP_Real>::quiet_NaN());
+      g_memoscip->SlackCons.resize(g_memoscip->AllVars.size(), nullptr);
 
       const int slackIdx = SCIPvarGetIndex(slack)-g_memoscip->nOriginalVar;
       g_memoscip->CurrentVarIdx.resize(slackIdx+1);
@@ -251,6 +256,8 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
          for (size_t i = 0; i < consvars.size(); ++i) {
             SCIP_CALL( SCIPaddVarToRow(scip, row, consvars[i], consvals[i]) );
          }
+         // Implied upper bound of the slack from the exact row (SCIPaddVarToRow may transform non-active variables)
+         g_memoscip->SlackImpliedUb[slackAllIdx] = slackUbFromRow(scip, row, SCIProwGetRhs(row), slack);
          SCIP_Bool infeasible = FALSE;
          SCIP_CALL( SCIPaddPoolCut(scip, row) );   // persistent, re-injected when violated
 
@@ -275,6 +282,8 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
                                     FALSE,   // removable
                                     FALSE) );// stickingatnode
          SCIP_CALL( SCIPaddCons(scip, cons) );
+         // The implied upper bound of the slack is computed from the row of the constraint once it is in the LP
+         g_memoscip->SlackCons[slackAllIdx] = cons;
          g_memoscip->nodeInfoMap[nodenumber].AddedConstraints.push_back(cons);
          g_memoscip->Unconstructed_cons.push_back(cons);
          SCIP_CALL( SCIPreleaseCons(scip, &cons) );

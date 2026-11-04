@@ -2,6 +2,7 @@
 #define MEMOSCIP_READER_H
 
 #include <string>
+#include <vector>
 #include "scip/scip.h"
 
 // Read a KPCG instance from `path` and add variables/constraints/objective
@@ -12,7 +13,10 @@ bool readKPCGInstance(SCIP* scip, const std::string& path, int encoding, std::st
 // Read a binary CSP instance in XCSP 2.1 format (extensional constraints, conflicts or supports)
 // from `path`. One binary variable x<i>_<v> is created per value v of each variable i.
 // encoding 0: each forbidden pair (a, b) of a constraint on (i, j) gives x<i>_<a> + x<j>_<b> <= 1.
-// otherwise: one binary variable per pair of values of each constraint, forbidden pairs fixed to 0.
-bool readXCSPInstance(SCIP* scip, const std::string& path, int encoding, std::string& err);
+// otherwise (Max-CSP): one binary variable per pair of values of each constraint, each forbidden pair
+// has cost 1 and the number of selected forbidden pairs is minimised.
+// If varnames is given, it receives the XCSP variable names: the value variables of varnames[i] are x<i>_<v>.
+bool readXCSPInstance(SCIP* scip, const std::string& path, int encoding, std::string& err,
+    std::vector<std::string>* varnames = nullptr);
 
 #endif // MEMOSCIP_READER_H

@@ -68,6 +68,10 @@ struct MemoSCIPContext {
     std::string FileExt;
     std::vector<SCIP_CONS*> Unconstructed_cons; //Constraint added to the problem but not yet added in the LP
     std::vector<SCIP_ROW*> DiveRelaxedRows; //Learned cut rows relaxed to one side in the current dive because their slack column is not in the LP
+    // Learned cut slacks s_k >= 0 (row a_k x - s_k = b_k) have no upper bound, but s_k <= max activity of a_k x - b_k
+    // over the global bounds. Indexed by AllVars: the implied upper bound (NaN while not computed from the LP row).
+    std::vector<SCIP_Real> SlackImpliedUb;
+    std::vector<SCIP_CONS*> SlackCons; //AllVars index -> linear constraint of the cut of the slack (nullptr for separator rows, whose bound is computed at creation)
 
 
     long long TOP = 1e+9;

@@ -5,6 +5,7 @@
 #include "sepa_mycuts.h"
 
 #include "lpi/lpi.h"
+#include "scip/cons_linear.h"
 #include "scip/cuts.h"
 #include "scip/scip.h"
 #include "scip/struct_lp.h"
@@ -15,6 +16,7 @@
 #include <cmath>
 #include <cstdio>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -72,9 +74,88 @@ void printProof(SCIP* scip, const vector<SCIP_Real>& coefs, const char* relation
 }
 
 
+/** Max activity of sum vals[k] vars[k] + constant - rhs over the global bounds, without the term of slack (coef -1). */
+static SCIP_Real slackUbFromTerms(SCIP* scip, int nvars, SCIP_VAR** vars, const SCIP_Real* vals, SCIP_Real constant,
+    SCIP_Real rhs, SCIP_VAR* slack)
+{
+    if(SCIPisInfinity(scip, fabs(rhs)) || SCIPisInfinity(scip, fabs(constant)))
+        return SCIPinfinity(scip);
+    SCIP_Real maxact = constant - rhs;
+    SCIP_Real sumabs = fabs(constant) + fabs(rhs);
+    bool slackFound = false;
+    for(int k = 0; k < nvars; ++k)
+    {
+        SCIP_VAR* var = vars[k];
+        const SCIP_Real a = vals[k];
+        if(var == slack){
+            assert(a == -1.0);
+            slackFound = true;
+            continue;
+        }
+        if(a == 0.0)
+            continue;
+        SCIP_Real bound;
+        if(a > 0){
+            bound = SCIPvarGetUbGlobal(var);
+            if(SCIPisInfinity(scip, bound) && isSlackVar(var))
+                bound = getSlackImpliedUb(scip, allVarsIndex(var));
+        }else
+            bound = SCIPvarGetLbGlobal(var);
+        if(SCIPisInfinity(scip, fabs(bound)))
+            return SCIPinfinity(scip);
+        maxact += a * bound;
+        sumabs += fabs(a * bound);
+    }
+    if(!slackFound)
+        return SCIPinfinity(scip);
+    // Safety margin for the rounding errors of the sum
+    return maxact + 1e-9 * max(1.0, sumabs);
+}
+
+SCIP_Real slackUbFromRow(SCIP* scip, SCIP_ROW* row, SCIP_Real rhs, SCIP_VAR* slack)
+{
+    const int ncols = SCIProwGetNNonz(row);
+    SCIP_COL** cols = SCIProwGetCols(row);
+    vector<SCIP_VAR*> vars(ncols);
+    for(int k = 0; k < ncols; ++k)
+        vars[k] = SCIPcolGetVar(cols[k]);
+    return slackUbFromTerms(scip, ncols, vars.data(), SCIProwGetVals(row), SCIProwGetConstant(row), rhs, slack);
+}
+
+SCIP_Real getSlackImpliedUb(SCIP* scip, int idx)
+{
+    vector<SCIP_Real>& ubs = g_memoscip.SlackImpliedUb;
+    if(idx < 0 || idx >= (int)ubs.size())
+        return SCIPinfinity(scip);
+    if(!std::isnan(ubs[idx]))
+        return ubs[idx];
+    SCIP_CONS* cons = idx < (int)g_memoscip.SlackCons.size() ? g_memoscip.SlackCons[idx] : nullptr;
+    if(cons == nullptr)
+        return SCIPinfinity(scip);
+    SCIP_VAR* slack = g_memoscip.AllVars[idx];
+    // Guard against a cycle between cuts (a cut only contains the slacks of earlier cuts)
+    ubs[idx] = SCIPinfinity(scip);
+    // The rhs of the constraint, not of the row, whose sides are relaxed in dives
+    const SCIP_Real rhs = SCIPgetRhsLinear(scip, cons);
+    SCIP_ROW* row = SCIPgetRowLinear(scip, cons);
+    SCIP_Real ub;
+    if(row != nullptr){
+        // Exact row of the LP: cached
+        ub = slackUbFromRow(scip, row, rhs, slack);
+        ubs[idx] = ub;
+    }else{
+        // Row not built yet: the constraint data gives a valid bound (global bounds of possibly non-active
+        // variables), but it is not cached so that the exact row is used once it exists
+        ub = slackUbFromTerms(scip, SCIPgetNVarsLinear(scip, cons), SCIPgetVarsLinear(scip, cons),
+            SCIPgetValsLinear(scip, cons), 0.0, rhs, slack);
+        ubs[idx] = std::numeric_limits<SCIP_Real>::quiet_NaN();
+    }
+    return ub;
+}
+
 void dropNegligibleCoefs(SCIP* scip, vector<SCIP_Real>& coefs, SCIP_Real& rhs)
 {
-    const SCIP_Real tol = 1e-9 * max(1.0, fabs(rhs));
+    const SCIP_Real tol = 1e-6 * max(1.0, fabs(rhs));
     for (size_t i = 0; i < coefs.size(); ++i)
     {
         const SCIP_Real c = coefs[i];
@@ -86,7 +167,14 @@ void dropNegligibleCoefs(SCIP* scip, vector<SCIP_Real>& coefs, SCIP_Real& rhs)
     
         // c*x_i >= min(c*lb, c*ub) globally, so dropping c*x_i requires rhs -= max(c*lb, c*ub)
         SCIP_VAR* var = g_memoscip.AllVars[i];
-        const SCIP_Real bound = c > 0 ? SCIPvarGetUbGlobal(var) : SCIPvarGetLbGlobal(var);
+        SCIP_Real bound = c > 0 ? SCIPvarGetUbGlobal(var) : SCIPvarGetLbGlobal(var);
+        // A learned cut slack has no upper bound, but its row a_k x - s_k = b_k bounds it
+        if(c > 0 && SCIPisInfinity(scip, bound) && isSlackVar(var))
+        {
+            bound = getSlackImpliedUb(scip, (int)i);
+            if(g_options.verbosity > 3)
+                cout<<"Drop slack coef "<<SCIPvarGetName(var)<<" "<<c<<" with implied ub "<<bound<<endl;
+        }
         if(SCIPisInfinity(scip, fabs(bound)))
             continue;
         rhs -= c * bound;
@@ -629,7 +717,8 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
             }else {
                 cout<<SCIPvarGetName(g_memoscip.AllVars[i])<<" "<<coef<<endl;
                 assert(isSlackVar(g_memoscip.AllVars[i]));
-                assert(coef<1e-9);
+                // Slack s >= 0: its new redcost -coef may be dual infeasible up to the LP dual feasibility tolerance
+                assert(SCIPisDualfeasLE(scip, coef, 0.0));
             }
         }
     }
@@ -687,6 +776,7 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
     SCIP* scip,
     SCIP_Longint nodeNumber)
 {
+    cout<<"GET INFEASIBILITY CERTIFICATE FOR NODE "<<nodeNumber<<endl;
     ScopedTimer GatherLPInfeasibilityCertificateTimer(g_memoscip.GatherLPInfeasibilityCertificateTime);
     NodeInfo& node = g_memoscip.nodeInfoMap[nodeNumber];
     const size_t nAllVars = g_memoscip.AllVars.size();

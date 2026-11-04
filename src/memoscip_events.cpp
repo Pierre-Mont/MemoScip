@@ -196,15 +196,30 @@ static void initVarIndexMaps(SCIP* scip)
 static void copyParentInfo(SCIP_Longint nodenumber)
 {
     NodeInfo& node = g_memoscip.nodeInfoMap[nodenumber];
-    const NodeInfo& parent = g_memoscip.nodeInfoMap[node.parent];
+    // The root has no parent (parent=-1): as in AnalyseDualSol, its parent is the virtual node 0
+    const SCIP_Longint parentnumber = (nodenumber==1) ? 0 : node.parent;
+    const NodeInfo& parent = g_memoscip.nodeInfoMap[parentnumber];
+    const size_t nAllVars = g_memoscip.AllVars.size();
     node.redcosts = parent.redcosts;
     node.lb=parent.lb;
     node.y_i=parent.y_i;
     node.DualSol=parent.DualSol;
+    // Node 0 has no dual solution: an empty proof means zero duals (and redcosts equal to the parent ones)
+    if(node.redcosts.empty())
+        node.redcosts.assign(nAllVars, 0.0);
+    if(node.y_i.empty())
+        node.y_i.assign(nAllVars, 0.0);
+    if(node.DualSol.empty())
+        node.DualSol.assign(g_memoscip.nbctr, 0.0);
+    // Same as AnalyseDualSol: the reduced cost of a fixed variable is 0
+    if(nodenumber==1)
+        for(size_t i = 0; i < node.redcosts.size() && i < nAllVars; ++i)
+            if(g_memoscip.VarLb[i]==g_memoscip.VarUb[i])
+                node.redcosts[i]=0;
     node.DualProofCoef.second=0;
     node.Status="FEASIBLE";
     node.lb_increase=0;
-    for (size_t i = 0; i < parent.y_i.size(); i++){
+    for (size_t i = 0; i < node.y_i.size(); i++){
         if(g_memoscip.VarLb[i]==1){
             node.Var1.push_back(allVarsIndex(g_memoscip.AllVars[i]));
         }

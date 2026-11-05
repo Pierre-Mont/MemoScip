@@ -5,6 +5,7 @@
 
 #include "scip/cons_linear.h"
 #include "memoscip_dual.h"
+#include "memoscip_events.h"
 #include "scip/var.h"
 
 #include <algorithm>
@@ -179,6 +180,73 @@ void SCIPprintQueuedCuts(
 }
 
 
+/** Option -subslack: replaces in the cut every learned slack s_k by its definition a_k x - b_k, then reduces the
+ *  complementary literals and drops the negligible coefficients. Returns false if the cut becomes trivial. */
+static bool substituteSlacks(SCIP* scip, QueuedCut& cut, MemoSCIPContext* ctx)
+{
+   const size_t n = ctx->AllVars.size();
+   std::vector<SCIP_Real> coefs(n, 0.0);
+   for( size_t i = 0; i < cut.vars.size(); ++i )
+      coefs[allVarsIndex(cut.vars[i])] += cut.vals[i];
+
+   SCIP_Real rhs = cut.rhs;
+   bool changed = false;
+   for( size_t j = 0; j < n; ++j )
+   {
+      if( coefs[j] == 0.0 || j >= ctx->SlackHasDef.size() || !ctx->SlackHasDef[j] )
+         continue;
+      // A negative slack term is dropped (s_j >= 0), as the weakening does without the option: substituting it would
+      // lower the rhs (possibly below 0) and only add negative coefficients that the weakening removes anyway
+      if( coefs[j] < 0.0 )
+      {
+         coefs[j] = 0.0;
+         changed = true;
+         continue;
+      }
+      // c s_j = c a_j x - c b_j: the definitions only contain non learned-slack variables
+      const SCIP_Real c = coefs[j];
+      coefs[j] = 0.0;
+      for( const auto& t : ctx->SlackDefTerms[j] )
+         coefs[t.first] += c * t.second;
+      rhs += c * ctx->SlackDefRhs[j];
+      changed = true;
+   }
+   if( !changed )
+      return true;
+   ctx->nbSubstCuts++;
+
+   for( size_t i = 0; i < n; ++i )
+      if( coefs[i] != 0.0 )
+         reduceComplementaryCoefs(scip, coefs, i, rhs);
+   dropNegligibleCoefs(scip, coefs, rhs);
+
+   cut.vars.clear();
+   cut.vals.clear();
+   bool allNonneg = true;
+   for( size_t i = 0; i < n; ++i )
+   {
+      if( coefs[i] == 0.0 )
+         continue;
+      cut.vars.push_back(ctx->AllVars[i]);
+      cut.vals.push_back(coefs[i]);
+      allNonneg = allNonneg && coefs[i] > 0.0;
+   }
+   cut.rhs = rhs;
+
+   // Trivial: 0 >= rhs, or nonnegative coefficients (on nonnegative variables) with rhs <= 0
+   const SCIP_Real tol = 1e-6 * std::max(1.0, fabs(rhs));
+   if( cut.vars.empty() || (allNonneg && rhs <= tol) )
+   {
+      if( cut.vars.empty() && rhs > tol )
+         std::cout << "WARNING: cut " << cut.name << " reduces to 0 >= " << rhs << " after slack substitution" << std::endl;
+      if( g_options.verbosity > 2 )
+         std::cout << "Cut " << cut.name << " trivial after slack substitution (" << cut.vars.size() << " vars, rhs " << rhs << ")" << std::endl;
+      ctx->nbSubstTrivial++;
+      return false;
+   }
+   return true;
+}
+
 /** Adds the queued cuts to the problem, each one with a new slack variable: sum coef*x - slack = rhs.
  *  With sepa, cuts are added as separator rows (and to the cut pool), otherwise as linear constraints. */
 SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, double Top,bool sepa, int* nbctr, SCIP_Longint nodenumber, SCIP_SEPA* sepaname)
@@ -192,6 +260,10 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
 
       assert(!cut.vars.empty());
 
+      // Substitution on the added cut only: the node proofs passed to the parents keep the slacks
+      if( g_options.subSlack && !substituteSlacks(scip, cut, g_memoscip) )
+         continue;
+
       SCIP_Real rhs = roundToDecimals(cut.rhs, 9);
 
       std::vector<SCIP_VAR*> consvars;
@@ -204,6 +276,13 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
       else
          Weaken(cut.vals);
 
+      // rhs <= Negterm (the minimum activity): the cut is trivially satisfied, and saturating at a cap <= 0 would be invalid
+      if( rhs - Negterm <= 1e-6 * std::max(1.0, fabs(rhs)) )
+      {
+         if( g_options.subSlack )
+            g_memoscip->nbSubstTrivial++;
+         continue;
+      }
       Saturate(cut.vals, cut.vars, rhs-Negterm);
       for( size_t i = 0; i < cut.vars.size(); ++i )
       {
@@ -217,6 +296,19 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
 
       if(consvars.empty())
          continue;
+
+      // Option -subslack: definition of the new slack, s = consvals . consvars - rhs (no learned slack left in it)
+      std::vector<std::pair<int, SCIP_Real>> slackDef;
+      if( g_options.subSlack )
+      {
+         slackDef.reserve(consvars.size());
+         for( size_t i = 0; i < consvars.size(); ++i )
+         {
+            const int idx = allVarsIndex(consvars[i]);
+            assert(idx >= (int)g_memoscip->SlackHasDef.size() || !g_memoscip->SlackHasDef[idx]);
+            slackDef.emplace_back(idx, consvals[i]);
+         }
+      }
 
       // New slack variable sc_<k> of the cut
       SCIP_VAR* slack=nullptr;
@@ -235,6 +327,15 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
       const int slackAllIdx = (int)g_memoscip->AllVars.size()-1;
       g_memoscip->SlackImpliedUb.resize(g_memoscip->AllVars.size(), std::numeric_limits<SCIP_Real>::quiet_NaN());
       g_memoscip->SlackCons.resize(g_memoscip->AllVars.size(), nullptr);
+      if( g_options.subSlack )
+      {
+         g_memoscip->SlackHasDef.resize(g_memoscip->AllVars.size(), 0);
+         g_memoscip->SlackDefTerms.resize(g_memoscip->AllVars.size());
+         g_memoscip->SlackDefRhs.resize(g_memoscip->AllVars.size(), 0.0);
+         g_memoscip->SlackHasDef[slackAllIdx] = 1;
+         g_memoscip->SlackDefTerms[slackAllIdx] = std::move(slackDef);
+         g_memoscip->SlackDefRhs[slackAllIdx] = rhs;
+      }
 
       const int slackIdx = SCIPvarGetIndex(slack)-g_memoscip->nOriginalVar;
       g_memoscip->CurrentVarIdx.resize(slackIdx+1);

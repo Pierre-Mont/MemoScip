@@ -50,6 +50,8 @@ struct MemoSCIPRunOptions {
 
     int Weaken = 0; // 0 = no weakening, 1 = weaken constraints
 
+    bool subSlack = false; // True = substitute the learned slacks by their definition in a cut when it is added
+
     int pseudoObjCut = 1; // 0 = always prove unsolved nodes with a dive LP, 1 = use the pseudo objective proof when it reaches the incumbent
 };
 

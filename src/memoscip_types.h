@@ -72,6 +72,13 @@ struct MemoSCIPContext {
     // over the global bounds. Indexed by AllVars: the implied upper bound (NaN while not computed from the LP row).
     std::vector<SCIP_Real> SlackImpliedUb;
     std::vector<SCIP_CONS*> SlackCons; //AllVars index -> linear constraint of the cut of the slack (nullptr for separator rows, whose bound is computed at creation)
+    // Option -subslack: definition of the learned slack s_k = a_k x - b_k, indexed by AllVars (a_k over AllVars indices
+    // of non learned-slack variables). Only filled for the cuts added with the option.
+    std::vector<char> SlackHasDef;
+    std::vector<std::vector<std::pair<int, SCIP_Real>>> SlackDefTerms;
+    std::vector<SCIP_Real> SlackDefRhs;
+    long long nbSubstCuts = 0;    // cuts in which at least one learned slack was substituted
+    long long nbSubstTrivial = 0; // substituted cuts skipped because trivial
 
 
     long long TOP = 1e+9;

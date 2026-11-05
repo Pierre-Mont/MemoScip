@@ -340,6 +340,8 @@ static void printStatistics(SCIP* scip)
     cout<<"Primal bound : "<<SCIPgetPrimalbound(scip)<<endl;
     cout<<"Dual bound : "<<SCIPgetDualbound(scip)<<endl;
     cout<<"Number of learned cuts : "<<g_memoscip.nbAddedctr<<endl;
+    if(g_options.subSlack)
+        cout<<"Slack substitution : "<<g_memoscip.nbSubstCuts<<" cuts substituted, "<<g_memoscip.nbSubstTrivial<<" skipped as trivial"<<endl;
     cout<<"Gap : "<<SCIPgetGap(scip)<<endl;
     cout<<"Time in AnalyseDualSol : "<<g_memoscip.AnalyseDualSolTime.count()<<" seconds"<<endl;
     cout<<"Time in eventExecNodeDelete : "<<g_memoscip.NodeDeleteTime.count()<<" seconds"<<endl;

@@ -554,7 +554,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeFocused)
 
 /** Removes from coefs the common part of the coefficient of literal i and of its complementary literal(s)
  *  (auxiliary variables), decreasing rhs accordingly: they sum to 1. */
-static void reduceComplementaryCoefs(SCIP* scip, vector<SCIP_Real>& coefs, size_t i, SCIP_Real& rhs)
+void reduceComplementaryCoefs(SCIP* scip, vector<SCIP_Real>& coefs, size_t i, SCIP_Real& rhs)
 {
     const vector<int>& auxs = g_memoscip.AuxVar[i];
     const bool ownAux = auxs.size()==1 && auxs[0]==(int)i;

@@ -5,7 +5,11 @@
 
 #include "scip/scip.h"
 
+#include <vector>
+
 void includeNodeSolvedEventHandler(SCIP* scip);
+/** Removes from coefs the common part of the coefficient of literal i and of its complementary literal(s), decreasing rhs. */
+void reduceComplementaryCoefs(SCIP* scip, std::vector<SCIP_Real>& coefs, size_t i, SCIP_Real& rhs);
 void includeBoundChangedEventHandler(SCIP* scip);
 void includeNodeFocusedEventHandler(SCIP* scip);
 void includeNodeInfeasibleEventHandler(SCIP* scip);

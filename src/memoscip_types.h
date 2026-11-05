@@ -20,6 +20,19 @@ struct SolCollector {
     SCIP_RETCODE collect(SCIP* scip);
 };
 
+/** Reduced costs d = c - y^T A of the LP columns for the dual solution y (indexed by LP row position). */
+void computeRedcosts(SCIP* scip, const std::vector<SCIP_Real>& dualsol, std::vector<SCIP_Real>& redcost);
+
+/** A piece of a dual proof (option -split): sparse coefficients (AllVars index) and its own rhs. A proof is a
+ *  combination of equality rows (bound duals go through the domain equality x + aux = 1), so splitting it row by row
+ *  gives pieces that are valid on their own and sum to the whole proof. */
+struct ProofPart {
+    std::vector<int> inds;
+    std::vector<SCIP_Real> coefs;
+    SCIP_Real rhs = 0.0;
+    bool orphan = false;  // node increment piece with no unfixed variable at the node (newly fixed variables, fully fixed rows)
+};
+
 struct NodeInfo {
     int number = 0;
     SCIP_Real lb_increase = 0.0;
@@ -42,6 +55,12 @@ struct NodeInfo {
 
     std::vector<SCIP_Real> y_i;   // dual solution of constraints x_i<=1. Based on AllVars index. y_i[i] = dual solution of constraint AllVars[i]<=1
     std::vector<SCIP_Real> redcosts; // redcosts based on AllVars index. redcosts[i] = redcost of AllVars[i]
+    std::vector<SCIP_Real> LPLb, LPUb;  // with -comp: local bounds (AllVars index) of the LP whose duals are DualSol
+    // Option -split
+    std::vector<std::pair<int,int>> CompLabel;  // sorted (AllVars index, component id) of the unfixed columns of the node LP
+    std::vector<ProofPart> IncParts;  // node increment (DualProofCoef) split by component of the node LP
+    std::vector<ProofPart> Parts;     // proof of the node subtree split by component, set when the node is deleted
+    bool HasParts = false;
 
     std::vector<std::pair<SCIP_Longint, SCIP_Real>> NodeConsistency;  // (variable removed by reduced cost filtering, UB - parent lb)
 
@@ -73,6 +92,15 @@ struct MemoSCIPContext {
     std::vector<SCIP_Real> SlackImpliedUb;
     std::vector<SCIP_CONS*> SlackCons; //AllVars index -> linear constraint of the cut of the slack (nullptr for separator rows, whose bound is computed at creation)
 
+
+    // Option -comp: nodes whose duals were mixed per connected component, kept unchanged, or not mixed (bound check failed)
+    long long DualMixApplied = 0;
+    long long DualMixUnchanged = 0;
+    long long DualMixRejected = 0;
+    long long SplitNodes = 0;       // node deletions handled per component (-split)
+    long long SplitFallback = 0;    // node deletions that fell back to the single proof fusion
+    long long SplitPassengers = 0;  // parts of other components passed from a child to the node
+    long long SplitMerged = 0;      // child parts that joined another component at the node
 
     long long TOP = 1e+9;
     std::chrono::duration<double> AnalyseDualSolTime{0.0}; // cumulated time spent in AnalyseDualSol

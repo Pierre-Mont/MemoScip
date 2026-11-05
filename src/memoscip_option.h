@@ -39,6 +39,10 @@ struct MemoSCIPRunOptions {
 
     int branchingOrder = -1;   //-1: branch on any value, 0: branch on x_{i0} only, 1: branch on x_{i1} only
 
+    /** Strict order (-os): the custom branching rule branches on the first unfixed variable of OrderVar, even if
+     *  its LP value is integral (default: the first fractional one). */
+    bool strictOrder = false;
+
     /** Variable ordering file (-order): variables are branched on in this order by the custom branching rule. */
     std::string orderFile;
 
@@ -49,6 +53,13 @@ struct MemoSCIPRunOptions {
     bool finish_Learn = false; // True = generate constraints until root node,  False = stop when problem is solved
 
     int Weaken = 0; // 0 = no weakening, 1 = weaken constraints
+
+    /** Remove the dual noise per connected component of the node LP (-comp): the rows of the components the node
+     *  decision does not touch keep the parent duals. */
+    bool dualComponents = false;
+    /** Keep one dual proof per connected component of the node LP (-split, implies -comp): only the proofs of the
+     *  component of the branching variable are fused and learned, the other ones are passed to the parent. */
+    bool splitProofs = false;
 
     int pseudoObjCut = 1; // 0 = always prove unsolved nodes with a dive LP, 1 = use the pseudo objective proof when it reaches the incumbent
 };

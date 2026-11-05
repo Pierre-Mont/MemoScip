@@ -133,6 +133,28 @@ static bool addLinearCons(SCIP* scip, const char* name, int nvars, SCIP_VAR** va
     return true;
 }
 
+/** Like addLinearCons, but the constraint is only used for propagation: it is not in the LP, not separated, enforced
+ *  or checked. For constraints implied by the LP rows that bound propagation would not derive from them. */
+static bool addPropagationCons(SCIP* scip, const char* name, int nvars, SCIP_VAR** vars, SCIP_Real* coefs,
+    SCIP_Real lhs, SCIP_Real rhs, const std::string& what, std::string& err)
+{
+    SCIP_CONS* cons = nullptr;
+    if (SCIPcreateConsLinear(scip, &cons, name, nvars, vars, coefs, lhs, rhs,
+            FALSE,   // initial
+            FALSE,   // separate
+            FALSE,   // enforce
+            FALSE,   // check
+            TRUE,    // propagate
+            FALSE,   // local
+            FALSE,   // modifiable
+            FALSE,   // dynamic
+            FALSE,   // removable
+            FALSE) != SCIP_OKAY) { err = "SCIP error creating " + what; return false; }
+    if (SCIPaddCons(scip, cons) != SCIP_OKAY) { err = "SCIP error adding " + what; return false; }
+    if (SCIPreleaseCons(scip, &cons) != SCIP_OKAY) { err = "SCIP error releasing " + what; return false; }
+    return true;
+}
+
 
 bool readKPCGInstance(SCIP* scip, const std::string& path, int encoding, std::string& err)
 {
@@ -505,24 +527,27 @@ bool readXCSPInstance(SCIP* scip, const std::string& path, int encoding, std::st
             }
 
         // Marginal constraints: each literal is the sum of the tuples containing it. The last value of each variable
-        // is implied by the other marginals, the tuple sum and the domain constraint: keeping it makes the equality
-        // rows linearly dependent and the LP duals non-unique
-        for (size_t a = 0; a + 1 < di; ++a) {
+        // is implied by the other marginals, the tuple sum and the domain constraint: keeping it in the LP makes the
+        // equality rows linearly dependent and the LP duals non-unique. It is only added for propagation: without it,
+        // fixing both variables to their first value does not fix the tuple variables (no single LP row forces them)
+        for (size_t a = 0; a < di; ++a) {
             vector<SCIP_VAR*> mvars(t[a].begin(), t[a].end());
             mvars.push_back(vars[i][a]);
             vector<SCIP_Real> mcoefs(dj, 1.0);
             mcoefs.push_back(-1.0);
-            snprintf(cname, sizeof(cname), "tuple_%d_i%zu", k, a);
-            if (!addLinearCons(scip, cname, (int)mvars.size(), mvars.data(), mcoefs.data(), 0.0, 0.0, "tuple marginal constraint", err)) { ok = false; return; }
+            const bool last = a + 1 == di;
+            snprintf(cname, sizeof(cname), last ? "marginal_%d_i%zu" : "tuple_%d_i%zu", k, a);
+            if (!(last ? addPropagationCons : addLinearCons)(scip, cname, (int)mvars.size(), mvars.data(), mcoefs.data(), 0.0, 0.0, "tuple marginal constraint", err)) { ok = false; return; }
         }
-        for (size_t b = 0; b + 1 < dj; ++b) {
+        for (size_t b = 0; b < dj; ++b) {
             vector<SCIP_VAR*> mvars;
             for (size_t a = 0; a < di; ++a) mvars.push_back(t[a][b]);
             mvars.push_back(vars[j][b]);
             vector<SCIP_Real> mcoefs(di, 1.0);
             mcoefs.push_back(-1.0);
-            snprintf(cname, sizeof(cname), "tuple_%d_j%zu", k, b);
-            if (!addLinearCons(scip, cname, (int)mvars.size(), mvars.data(), mcoefs.data(), 0.0, 0.0, "tuple marginal constraint", err)) { ok = false; return; }
+            const bool last = b + 1 == dj;
+            snprintf(cname, sizeof(cname), last ? "marginal_%d_j%zu" : "tuple_%d_j%zu", k, b);
+            if (!(last ? addPropagationCons : addLinearCons)(scip, cname, (int)mvars.size(), mvars.data(), mcoefs.data(), 0.0, 0.0, "tuple marginal constraint", err)) { ok = false; return; }
         }
 
         // Exactly one tuple is selected

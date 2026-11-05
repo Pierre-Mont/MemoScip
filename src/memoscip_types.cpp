@@ -29,6 +29,12 @@ SCIP_RETCODE SolCollector::collect(SCIP* scip)
             dualsol[i] = 0.0;
     }
     // Reduced costs recomputed from the duals above (d = c - y^T A), so that the proofs and the reduced costs match exactly
+    computeRedcosts(scip, dualsol, redcost);
+    return SCIP_OKAY;
+}
+
+void computeRedcosts(SCIP* scip, const std::vector<SCIP_Real>& dualsol, std::vector<SCIP_Real>& redcost)
+{
     SCIP_COL** cols = SCIPgetLPCols(scip);
     for (size_t i = 0; i < redcost.size(); ++i)
     {
@@ -44,5 +50,4 @@ SCIP_RETCODE SolCollector::collect(SCIP* scip)
         }
         redcost[i] = fabs(d) < 1e-12 ? 0.0 : d;
     }
-    return SCIP_OKAY;
 }

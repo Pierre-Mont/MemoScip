@@ -341,6 +341,12 @@ static void printStatistics(SCIP* scip)
     cout<<"Dual bound : "<<SCIPgetDualbound(scip)<<endl;
     cout<<"Number of learned cuts : "<<g_memoscip.nbAddedctr<<endl;
     cout<<"Gap : "<<SCIPgetGap(scip)<<endl;
+    if (g_options.dualComponents)
+        cout<<"Dual component mixing : applied "<<g_memoscip.DualMixApplied<<" unchanged "<<g_memoscip.DualMixUnchanged
+            <<" rejected "<<g_memoscip.DualMixRejected<<endl;
+    if (g_options.splitProofs)
+        cout<<"Split proofs : nodes "<<g_memoscip.SplitNodes<<" fallback "<<g_memoscip.SplitFallback
+            <<" passengers "<<g_memoscip.SplitPassengers<<" merged parts "<<g_memoscip.SplitMerged<<endl;
     cout<<"Time in AnalyseDualSol : "<<g_memoscip.AnalyseDualSolTime.count()<<" seconds"<<endl;
     cout<<"Time in eventExecNodeDelete : "<<g_memoscip.NodeDeleteTime.count()<<" seconds"<<endl;
     cout<<"Time in eventExecNodeSolved : "<<g_memoscip.NodeSolvedTime.count()<<" seconds"<<endl;

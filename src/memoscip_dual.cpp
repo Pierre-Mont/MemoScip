@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -382,7 +383,8 @@ void checkSummedRhs(SCIP_Longint nodenumber, const vector<long>& children, SCIP_
         assert(rhs_summed - (min(nodeInfoMap[children[1]].lb_increase,nodeInfoMap[children[0]].lb_increase) + nodeInfoMap[nodenumber].lb_increase ) > -1e-9 || !nodeInfoMap[nodenumber].NodeConsistency.empty());
     }
     if(children.size()==1){
-        assert(abs(rhs_summed - (nodeInfoMap[children[0]].lb_increase + nodeInfoMap[nodenumber].lb_increase )<1e-9) || !nodeInfoMap[nodenumber].NodeConsistency.empty());
+        // As in addNodeProof, a node increase that is not positive (e.g. -1e-9 of dual noise) is not added
+        assert(abs(rhs_summed - (nodeInfoMap[children[0]].lb_increase + max(0.0, nodeInfoMap[nodenumber].lb_increase) )<1e-9) || !nodeInfoMap[nodenumber].NodeConsistency.empty());
     }
     (void)nodenumber;
     (void)rhs_summed;
@@ -489,6 +491,342 @@ SCIP_RETCODE FinishLearn(SCIP* scip, SCIP_Longint nodenumber){
 }
 
 
+/** Dual bound sum_r y_r (side_r - const_r) + sum_j min(d_j lb_j, d_j ub_j) of the LP for the duals y and reduced
+ *  costs d (local bounds); -infinity if a multiplier beyond the dual feasibility tolerance needs an infinite side or
+ *  bound (within the tolerance it is LP noise, e.g. on the unbounded slack of a learned cut, and is ignored). */
+static SCIP_Real lagrangianBound(SCIP* scip, const vector<SCIP_Real>& dualsol, const vector<SCIP_Real>& redcost)
+{
+    SCIP_ROW** rows = SCIPgetLPRows(scip);
+    SCIP_COL** cols = SCIPgetLPCols(scip);
+    SCIP_Real bound = 0.0;
+    for (size_t r = 0; r < dualsol.size(); ++r)
+    {
+        const SCIP_Real y = dualsol[r];
+        if (y == 0.0)
+            continue;
+        const SCIP_Real lhs = SCIProwGetLhs(rows[r]);
+        const SCIP_Real rhs = SCIProwGetRhs(rows[r]);
+        const SCIP_Real side = (lhs == rhs || y < 0.0) ? rhs : lhs;
+        if (SCIPisInfinity(scip, fabs(side)))
+        {
+            if (SCIPisDualfeasZero(scip, y))
+                continue;
+            return -SCIPinfinity(scip);
+        }
+        bound += y * (side - SCIProwGetConstant(rows[r]));
+    }
+    for (size_t j = 0; j < redcost.size(); ++j)
+    {
+        const SCIP_Real d = redcost[j];
+        if (d == 0.0)
+            continue;
+        const SCIP_Real b = d > 0.0 ? SCIPcolGetLb(cols[j]) : SCIPcolGetUb(cols[j]);
+        if (SCIPisInfinity(scip, fabs(b)))
+        {
+            if (SCIPisDualfeasZero(scip, d))
+                continue;
+            return -SCIPinfinity(scip);
+        }
+        bound += d * b;
+    }
+    return bound;
+}
+
+static int ufFind(vector<int>& uf, int a)
+{
+    while (uf[a] != a)
+        a = uf[a] = uf[uf[a]];
+    return a;
+}
+
+static bool isUnfixedCol(SCIP_COL* col)
+{
+    return SCIPcolGetLb(col) != SCIPcolGetUb(col);
+}
+
+/** Connected components of the unfixed columns of the LP, joined by the rows that contain them: uf is a union-find
+ *  over the LP column positions, rowComp[r] a column of the component of row r (-1 if all its columns are fixed). */
+static void computeLPComponents(SCIP* scip, vector<int>& uf, vector<int>& rowComp)
+{
+    SCIP_ROW** rows = SCIPgetLPRows(scip);
+    const int nrows = SCIPgetNLPRows(scip);
+    const int ncols = SCIPgetNLPCols(scip);
+    uf.resize(ncols);
+    for (int j = 0; j < ncols; ++j)
+        uf[j] = j;
+    rowComp.assign(nrows, -1);
+    for (int r = 0; r < nrows; ++r)
+    {
+        SCIP_COL** rcols = SCIProwGetCols(rows[r]);
+        for (int k = 0; k < SCIProwGetNNonz(rows[r]); ++k)
+        {
+            const int j = SCIPcolGetLPPos(rcols[k]);
+            if (j < 0 || !isUnfixedCol(rcols[k]))
+                continue;
+            if (rowComp[r] < 0)
+                rowComp[r] = j;
+            else
+                uf[ufFind(uf, j)] = ufFind(uf, rowComp[r]);
+        }
+    }
+}
+
+/** Option -comp. The columns of the node LP that are unfixed are joined by the rows that contain them into connected
+ *  components. A component is affected by the node if one of its rows contains a variable whose bounds changed at this
+ *  node (branching or propagation) or is not in the parent LP; the other components are the same LP blocks as in the
+ *  parent, whose duals are optimal for them. Their rows, and the rows with only fixed columns that do not touch a
+ *  changed variable, get the parent duals, so that the difference with the parent is 0 on them instead of the noise of
+ *  a degenerate LP. The mixed duals replace the collected ones only if they give the same LP bound. */
+static bool mixDualsByComponents(SCIP* scip, const NodeInfo& parentInfo, SolCollector& collector)
+{
+    // Without the bounds of the parent LP (e.g. its duals come from a dive) the unchanged components are unknown
+    if (parentInfo.DualSol.empty() || parentInfo.LPLb.empty() || SCIPinDive(scip) || SCIPinProbing(scip))
+        return false;
+    SCIP_ROW** rows = SCIPgetLPRows(scip);
+    SCIP_COL** cols = SCIPgetLPCols(scip);
+    const int nrows = SCIPgetNLPRows(scip);
+    const int ncols = SCIPgetNLPCols(scip);
+
+    // Components of the unfixed columns
+    vector<int> uf, rowComp;
+    computeLPComponents(scip, uf, rowComp);
+    auto unfixed = [&](SCIP_COL* col){ return isUnfixedCol(col); };
+
+    // Rows touching a variable whose bounds differ from the ones of the parent LP, and rows not in the parent LP.
+    // Comparing with the bounds of the LP of the parent duals (rather than using the domchg of the focus node) also
+    // catches the bound changes made after that LP: at the parent after its LP (reduced cost fixing, propagation),
+    // or at the parent and earlier ancestors whose duals were copied because their bound did not change.
+    vector<char> rowTouched(nrows, 0);
+    auto touchRowsOf = [&](SCIP_COL* col){
+        SCIP_ROW** crows = SCIPcolGetRows(col);
+        for (int k = 0; k < SCIPcolGetNNonz(col); ++k)
+        {
+            const int r = SCIProwGetLPPos(crows[k]);
+            if (r >= 0)
+                rowTouched[r] = 1;
+        }
+    };
+    for (int j = 0; j < ncols; ++j)
+    {
+        const size_t idx = allVarsIndex(SCIPcolGetVar(cols[j]));
+        if (idx >= parentInfo.LPLb.size() || SCIPcolGetLb(cols[j]) != parentInfo.LPLb[idx] || SCIPcolGetUb(cols[j]) != parentInfo.LPUb[idx])
+            touchRowsOf(cols[j]);
+    }
+    for (int r = 0; r < nrows; ++r)
+        if (SCIProwGetIndex(rows[r]) >= (int)parentInfo.DualSol.size())
+            rowTouched[r] = 1;
+    vector<char> affected(ncols, 0);  // indexed by component root
+    for (int r = 0; r < nrows; ++r)
+        if (rowTouched[r] && rowComp[r] >= 0)
+            affected[ufFind(uf, rowComp[r])] = 1;
+
+    // Mixed duals: the parent dual on the rows of unaffected components and on untouched rows with only fixed columns
+    vector<SCIP_Real> mixed = collector.dualsol;
+    bool changed = false;
+    for (int r = 0; r < nrows; ++r)
+    {
+        const bool keepChild = rowComp[r] >= 0 ? affected[ufFind(uf, rowComp[r])] : rowTouched[r];
+        if (keepChild)
+            continue;
+        mixed[r] = parentInfo.DualSol[SCIProwGetIndex(rows[r])];
+        changed = changed || mixed[r] != collector.dualsol[r];
+    }
+    if (!changed)
+    {
+        g_memoscip.DualMixUnchanged++;
+        return false;
+    }
+
+    // Accept the mixed duals only if their LP bound is the one of the collected duals
+    vector<SCIP_Real> mixedRedcost(collector.redcost.size());
+    computeRedcosts(scip, mixed, mixedRedcost);
+    const SCIP_Real childBound = lagrangianBound(scip, collector.dualsol, collector.redcost);
+    const SCIP_Real mixedBound = lagrangianBound(scip, mixed, mixedRedcost);
+    const SCIP_Real tol = 1e-7 * max(1.0, fabs(childBound));
+    if (g_options.verbosity > 1)
+    {
+        int ncomp = 0, naffected = 0;
+        for (int j = 0; j < ncols; ++j)
+            if (unfixed(cols[j]) && !isSlackVar(SCIPcolGetVar(cols[j])) && ufFind(uf, j) == j)
+            {
+                ncomp++;
+                naffected += affected[j];
+            }
+        cout<<"Dual components: "<<ncomp<<" components, "<<naffected<<" affected, child bound "<<childBound
+            <<" mixed bound "<<mixedBound<<" LP obj "<<collector.objval<<endl;
+    }
+    if (SCIPisInfinity(scip, -mixedBound) || mixedBound < childBound - tol || fabs(childBound - collector.objval) > tol)
+    {
+        g_memoscip.DualMixRejected++;
+        return false;
+    }
+    collector.dualsol = mixed;
+    collector.redcost = mixedRedcost;
+    g_memoscip.DualMixApplied++;
+    return true;
+}
+
+/** dropNegligibleCoefs on a sparse proof part. */
+static void dropNegligiblePart(SCIP* scip, ProofPart& part)
+{
+    const SCIP_Real tol = 1e-6 * max(1.0, fabs(part.rhs));
+    size_t w = 0;
+    for (size_t k = 0; k < part.inds.size(); ++k)
+    {
+        const int i = part.inds[k];
+        const SCIP_Real c = part.coefs[k];
+        bool drop = (c == 0.0);
+        if (!drop && fabs(c) < tol)
+        {
+            SCIP_VAR* var = g_memoscip.AllVars[i];
+            SCIP_Real bound = c > 0 ? SCIPvarGetUbGlobal(var) : SCIPvarGetLbGlobal(var);
+            if (c > 0 && SCIPisInfinity(scip, bound) && isSlackVar(var))
+                bound = getSlackImpliedUb(scip, i);
+            if (!SCIPisInfinity(scip, fabs(bound)))
+            {
+                part.rhs -= c * bound;
+                drop = true;
+            }
+        }
+        if (!drop)
+        {
+            part.inds[w] = i;
+            part.coefs[w] = c;
+            ++w;
+        }
+    }
+    part.inds.resize(w);
+    part.coefs.resize(w);
+}
+
+/** Option -split: splits the node increment proof (rows weighted by the dual difference with the parent, plus the
+ *  bound dual differences diffy) by connected component of the node LP, and stores the component of each unfixed
+ *  column. A row goes to the component of its unfixed columns. A bound dual goes to the component of its column if
+ *  it is unfixed; for a variable fixed to 1 at the node and at the parent, diffy = -sum_r a_r (y_r - y_r^P) is split
+ *  over its rows so that it cancels the row terms of each component; the rest (variables newly fixed at the node,
+ *  fully fixed rows) goes to an orphan part. The parts sum to the increment (checked with -d). */
+static void buildIncrementParts(SCIP* scip, NodeInfo& node, const NodeInfo& parentInfo, const SolCollector& collector,
+    const vector<SCIP_Real>& diffy, const vector<SCIP_Real>& total, SCIP_Real totalRhs)
+{
+    SCIP_ROW** rows = SCIPgetLPRows(scip);
+    SCIP_COL** cols = SCIPgetLPCols(scip);
+    const int nrows = SCIPgetNLPRows(scip);
+    const int ncols = SCIPgetNLPCols(scip);
+    vector<int> uf, rowComp;
+    computeLPComponents(scip, uf, rowComp);
+    auto compOfCol = [&](int j){ return allVarsIndex(SCIPcolGetVar(cols[ufFind(uf, j)])); };
+
+    node.CompLabel.clear();
+    for (int j = 0; j < ncols; ++j)
+        if (isUnfixedCol(cols[j]))
+            node.CompLabel.push_back({allVarsIndex(SCIPcolGetVar(cols[j])), compOfCol(j)});
+    sort(node.CompLabel.begin(), node.CompLabel.end());
+
+    // group -1: orphan
+    std::map<int, std::map<int, SCIP_Real>> coef;
+    std::map<int, SCIP_Real> rhs;
+    auto rowGroup = [&](int r){ return rowComp[r] >= 0 ? compOfCol(rowComp[r]) : -1; };
+
+    vector<SCIP_Real> rowDelta(nrows, 0.0);
+    for (int r = 0; r < nrows; ++r)
+    {
+        if (SCIProwGetNNonz(rows[r]) <= 1)
+            continue;
+        const int idx = SCIProwGetIndex(rows[r]);
+        SCIP_Real dual = collector.dualsol[r];
+        if (idx < (int)parentInfo.DualSol.size())
+            dual -= parentInfo.DualSol[idx];
+        rowDelta[r] = dual;
+        const SCIP_Real rowValue = equalityRowValue(scip, rows[r]);
+        if (dual == 0.0 || rowValue == SCIPinfinity(scip))
+            continue;
+        const int g = rowGroup(r);
+        SCIP_COL** rcols = SCIProwGetCols(rows[r]);
+        SCIP_Real* rvals = SCIProwGetVals(rows[r]);
+        for (int k = 0; k < SCIProwGetNNonz(rows[r]); ++k)
+            coef[g][allVarsIndex(SCIPcolGetVar(rcols[k]))] += dual * rvals[k];
+        rhs[g] += dual * rowValue;
+    }
+
+    auto addBound = [&](int g, int i, SCIP_Real t){
+        coef[g][i] += t;
+        forEachAuxVar(shiftedIndex(g_memoscip.AllVars[i]), [&](int aux){ coef[g][aux] += t; });
+        rhs[g] += t;
+    };
+    for (size_t i = 0; i < diffy.size(); ++i)
+    {
+        const SCIP_Real d = diffy[i];
+        if (g_memoscip.VarUb[i] == SCIPinfinity(scip))
+            continue;
+        SCIP_VAR* var = g_memoscip.AllVars[i];
+        SCIP_COL* col = SCIPvarGetStatus(var) == SCIP_VARSTATUS_COLUMN ? SCIPvarGetCol(var) : nullptr;
+        const int j = col != nullptr ? SCIPcolGetLPPos(col) : -1;
+        // Even with d = 0 the row pieces of a variable fixed to 1 at both nodes must be cancelled per component
+        const bool fixedOneAtBoth = j >= 0 && g_memoscip.VarLb[i] == 1 && i < parentInfo.LPLb.size() && parentInfo.LPLb[i] == 1;
+        if (d == 0.0 && !fixedOneAtBoth)
+            continue;
+        if (j >= 0 && isUnfixedCol(cols[j]))
+        {
+            addBound(compOfCol(j), (int)i, d);
+            continue;
+        }
+        SCIP_Real rest = d;
+        if (fixedOneAtBoth)
+        {
+            SCIP_ROW** crows = SCIPcolGetRows(col);
+            SCIP_Real* cvals = SCIPcolGetVals(col);
+            for (int k = 0; k < SCIPcolGetNNonz(col); ++k)
+            {
+                const int r = SCIProwGetLPPos(crows[k]);
+                if (r < 0 || SCIProwGetNNonz(crows[k]) <= 1 || rowDelta[r] == 0.0)
+                    continue;
+                const SCIP_Real t = -cvals[k] * rowDelta[r];
+                addBound(rowGroup(r), (int)i, t);
+                rest -= t;
+            }
+        }
+        if (rest != 0.0)
+            addBound(-1, (int)i, rest);
+    }
+
+    node.IncParts.clear();
+    vector<SCIP_Real> check;
+    SCIP_Real checkRhs = 0.0;
+    if (g_options.debug)
+        check.assign(total.size(), 0.0);
+    for (auto& [g, m] : coef)
+    {
+        ProofPart part;
+        part.orphan = (g == -1);
+        part.rhs = rhs[g];
+        for (auto& [i, v] : m)
+        {
+            if (g_options.debug)
+                check[i] += v;
+            if (v != 0.0)
+            {
+                part.inds.push_back(i);
+                part.coefs.push_back(v);
+            }
+        }
+        if (g_options.debug)
+            checkRhs += part.rhs;
+        dropNegligiblePart(scip, part);
+        if (!part.inds.empty() || part.rhs != 0.0)
+            node.IncParts.push_back(std::move(part));
+    }
+    for (auto& [g, v] : rhs)
+        if (!coef.count(g) && g_options.debug)
+            checkRhs += v;
+    if (g_options.debug)
+    {
+        for (size_t i = 0; i < total.size(); ++i)
+            assert(fabs(check[i] - total[i]) <= 1e-6 * max(1.0, fabs(total[i])));
+        assert(fabs(checkRhs - totalRhs) <= 1e-6 * max(1.0, fabs(totalRhs)));
+    }
+    (void)totalRhs;
+}
+
 //Analyse the dual solution of a general LP to produce a dual proof constraint
 SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
     ScopedTimer AnalyseDualSolTimer(g_memoscip.AnalyseDualSolTime);
@@ -514,6 +852,9 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
         collector.init(scip);  // rebuild mapping + resize buffers
 
     SCIP_CALL(collector.collect(scip));
+    // With mixed duals the reduced costs are no longer the ones of the LP solver
+    const bool mixedDuals = g_options.dualComponents && nodeNumber>1 && mixDualsByComponents(scip, parentInfo, collector);
+    (void)mixedDuals;
 
     SCIP_COL** cols = SCIPgetLPCols(scip);
     SCIP_ROW** rows = SCIPgetLPRows(scip);
@@ -524,7 +865,7 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
     (void)stat;
     if(g_options.debug){
         for(int i =0; i < ncols; i++){
-            assert(SCIPinDive(scip) || SCIPisFeasEQ(scip, SCIPgetVarRedcost(scip, SCIPcolGetVar(cols[i])), collector.redcost[i]));
+            assert(SCIPinDive(scip) || mixedDuals || SCIPisFeasEQ(scip, SCIPgetVarRedcost(scip, SCIPcolGetVar(cols[i])), collector.redcost[i]));
             if(!isSlackVar(g_memoscip.AllVars[i])){
                 const int pos = shiftedIndex(g_memoscip.AllVars[i]);
                 assert(g_options.encoding!=0 || g_memoscip.VarLb[i] == SCIPvarGetLbLocal(g_memoscip.AllVars[i]) || anyAuxVar(pos, [](int aux){ return g_memoscip.VarUb[aux]==0; }) );
@@ -679,6 +1020,12 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
     }
 
     assert(nAllVars == TempCoef.size());
+    node.IncParts.clear();
+    if(g_options.splitProofs){
+        node.CompLabel.clear();
+        if(!SCIPinDive(scip) && !SCIPinProbing(scip))
+            buildIncrementParts(scip, node, parentInfo, collector, diffy_i, TempCoef, sumdual);
+    }
     if(g_options.verbosity > 2){
         cout<<"DUAL proof"<<endl;
         printProof(scip, TempCoef, ">=", sumdual, true);
@@ -723,6 +1070,17 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
         }
     }
     node.DualSol=IndexedDualSol;
+    node.LPLb.clear();
+    node.LPUb.clear();
+    if(g_options.dualComponents && !SCIPinDive(scip) && !SCIPinProbing(scip)){
+        node.LPLb.assign(nAllVars, 0.0);
+        node.LPUb.assign(nAllVars, -1.0);  // lb > ub: never equal for a variable not in the LP
+        for(int i = 0; i < ncols; i++){
+            const int idx = allVarsIndex(SCIPcolGetVar(cols[i]));
+            node.LPLb[idx] = SCIPcolGetLb(cols[i]);
+            node.LPUb[idx] = SCIPcolGetUb(cols[i]);
+        }
+    }
     node.y_i=newy_i;
     node.redcosts = redcost;
     assert(!redcost.empty());
@@ -765,6 +1123,7 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
 /** Marks the node as infeasible: its lower bound and proof right-hand side become TOP. */
 static void markNodeInfeasible(NodeInfo& node)
 {
+    node.IncParts.clear();
     node.lb=g_memoscip.TOP;
     node.DualProofCoef.second=g_memoscip.TOP;
     node.Status="INFEASIBLE";
@@ -776,7 +1135,6 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
     SCIP* scip,
     SCIP_Longint nodeNumber)
 {
-    cout<<"GET INFEASIBILITY CERTIFICATE FOR NODE "<<nodeNumber<<endl;
     ScopedTimer GatherLPInfeasibilityCertificateTimer(g_memoscip.GatherLPInfeasibilityCertificateTime);
     NodeInfo& node = g_memoscip.nodeInfoMap[nodeNumber];
     const size_t nAllVars = g_memoscip.AllVars.size();

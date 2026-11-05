@@ -112,6 +112,22 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
         out.sepa = true;
         return true;
     }
+    if (std::strcmp(s, "-os") == 0)
+    {
+        out.strictOrder = true;
+        return true;
+    }
+    if (std::strcmp(s, "-split") == 0)
+    {
+        out.splitProofs = true;
+        out.dualComponents = true;
+        return true;
+    }
+    if (std::strcmp(s, "-comp") == 0)
+    {
+        out.dualComponents = true;
+        return true;
+    }
     if (std::strcmp(s, "-fl") == 0)
     {
         out.finish_Learn = true;
@@ -263,6 +279,9 @@ void print_memoscip_usage(const char* programName)
         << "             an XCSP variable name stands for all its value variables), with the custom branching (-b=0)\n"
         << "  -w=N       Weaken constraints (0 = no weakening, 1 = weaken constraints)\n"
         << "  -ub=F      Initial primal bound: objective limit F (only solutions strictly better are accepted)\n"
+        << "  -os        Strict order: branch on the first unfixed variable of the order, even if its LP value is integral\n"
+        << "  -comp      Keep the parent duals on the LP components not touched by the node decision (removes dual noise)\n"
+        << "  -split     One dual proof per LP component: fuse and learn only the component of the branching variable (implies -comp)\n"
         << "  -pc=N      Pseudo objective cutoff proof (0 = always dive, 1 = use pseudo objective proof, default 1)\n"
         << "\n"
         << "Examples:\n"

@@ -9,6 +9,9 @@
 #include "scip/scip.h"
 
 #include <algorithm>
+#include <unordered_map>
+#include <map>
+#include <climits>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -204,6 +207,11 @@ static void copyParentInfo(SCIP_Longint nodenumber)
     node.lb=parent.lb;
     node.y_i=parent.y_i;
     node.DualSol=parent.DualSol;
+    node.IncParts.clear();
+    node.CompLabel=parent.CompLabel;  // the parent components are coarser: grouping with them is conservative
+    // The copied duals are the ones of the LP of the parent (or of an earlier ancestor): keep its bounds with them
+    node.LPLb=parent.LPLb;
+    node.LPUb=parent.LPUb;
     // Node 0 has no dual solution: an empty proof means zero duals (and redcosts equal to the parent ones)
     if(node.redcosts.empty())
         node.redcosts.assign(nAllVars, 0.0);
@@ -570,6 +578,328 @@ static void reduceComplementaryCoefs(SCIP* scip, vector<SCIP_Real>& coefs, size_
     }
 }
 
+/* Option -split: one proof per connected component of the node LP --------------------------------------------- */
+
+namespace {
+
+/** Dense proof piece used while a node is deleted. */
+struct DenseGroup {
+    vector<SCIP_Real> c;
+    SCIP_Real rhs = 0.0;
+    void add(const ProofPart& p, size_t n)
+    {
+        if (c.empty())
+            c.assign(n, 0.0);
+        for (size_t k = 0; k < p.inds.size(); ++k)
+            c[p.inds[k]] += p.coefs[k];
+        rhs += p.rhs;
+    }
+    void add(const DenseGroup& g, size_t n)
+    {
+        if (c.empty())
+            c.assign(n, 0.0);
+        for (size_t i = 0; i < g.c.size(); ++i)
+            c[i] += g.c[i];
+        rhs += g.rhs;
+    }
+    void ensure(size_t n)
+    {
+        if (c.empty())
+            c.assign(n, 0.0);
+    }
+};
+
+ProofPart partFromNodeProof(const NodeInfo& n)
+{
+    ProofPart p;
+    p.inds = n.DualProofInds;
+    p.coefs = n.DualProofCoef.first;
+    p.rhs = n.DualProofCoef.second;
+    return p;
+}
+
+/** Parts of the stored proof of a child: its parts if it was deleted with -split, else its whole proof. */
+vector<ProofPart> childParts(const NodeInfo& c)
+{
+    if (c.HasParts)
+        return c.Parts;
+    if (!c.DualProofInds.empty() || c.DualProofCoef.second != 0.0)
+        return { partFromNodeProof(c) };
+    return {};
+}
+
+int componentLabel(const NodeInfo& node, int idx)
+{
+    auto it = lower_bound(node.CompLabel.begin(), node.CompLabel.end(), std::make_pair(idx, INT_MIN));
+    return (it != node.CompLabel.end() && it->first == idx) ? it->second : -1;
+}
+
+struct LabelUF {
+    std::unordered_map<int, int> par;
+    int find(int a)
+    {
+        auto it = par.find(a);
+        if (it == par.end()) { par[a] = a; return a; }
+        if (it->second == a) return a;
+        const int r = find(it->second);
+        par[a] = r;
+        return r;
+    }
+    bool unite(int a, int b)
+    {
+        a = find(a); b = find(b);
+        if (a == b) return false;
+        par[a] = b;
+        return true;
+    }
+};
+
+/** FusionResolution on dense proofs: one is the proof of the child where the branching variable v is 1, zero the
+ *  proof of the child where it is 0. */
+void fuseDense(const DenseGroup& one, const DenseGroup& zero, int v, int branchVarShifted, DenseGroup& out)
+{
+    vector<SCIP_Real> ctr1 = one.c, ctr2 = zero.c;
+    bool iszero = false, iszero2 = true;
+    if (ctr2[v] == 0)
+        iszero = true;
+    else
+        ctr2[v] = 0;
+    for (int i : g_memoscip.AuxVar[branchVarShifted])
+    {
+        if (ctr1[i] != 0)
+            iszero2 = false;
+        ctr1[i] = 0;
+    }
+    if (iszero && !iszero2) { out.c = std::move(ctr2); out.rhs = zero.rhs; return; }
+    if (iszero2) { out.c = std::move(ctr1); out.rhs = one.rhs; return; }
+    for (size_t i = 0; i < ctr1.size(); ++i)
+        ctr2[i] = max(ctr1[i], ctr2[i]);
+    out.c = std::move(ctr2);
+    out.rhs = min(one.rhs, zero.rhs);
+}
+
+} // namespace
+
+/** Option -split. Builds the proof of a deleted node from the parts of its children, one part per connected
+ *  component of the node LP: the parts of the component of the branching variable are summed in each child and
+ *  fused, the parts of the other components (the same sub-problem in both children) are passed from the child where
+ *  their rhs is the largest, and the parts of the node increment are added to their component. Only the fused
+ *  component is learned as a cut. handled is false when the node is left to the single proof fusion (no component
+ *  labels, node consistency removals, learning 2 or 4, branching variable without component). */
+static SCIP_RETCODE splitNodeDelete(SCIP* scip, SCIP_Longint nodenumber, SCIP_Longint parentNumber,
+    const vector<long>& children, bool& handled)
+{
+    handled = false;
+    NodeInfo& nodeInfo = g_memoscip.nodeInfoMap[nodenumber];
+    if (g_options.learning == 2 || g_options.learning == 4 || !nodeInfo.NodeConsistency.empty() || nodeInfo.CompLabel.empty())
+        return SCIP_OKAY;
+    const size_t n = g_memoscip.AllVars.size();
+    const bool twoChildren = children.size() == 2;
+    int v = -1, branchVarShifted = -1, A = -1;
+    if (twoChildren)
+    {
+        branchVarShifted = g_memoscip.nodeInfoMap[children[0]].BranchVar;
+        v = g_memoscip.CurrentVarIdx[branchVarShifted];
+        A = componentLabel(nodeInfo, v);
+        if (A < 0)
+            return SCIP_OKAY;
+    }
+    handled = true;
+    if (children.size() == 1)
+        checkSingleChildProof(nodenumber, children[0]);
+
+    LabelUF uf;
+    if (A >= 0)
+        uf.find(A);
+    auto labelOf = [&](const ProofPart& p){
+        int rep = -1;
+        for (int i : p.inds)
+        {
+            const int l = componentLabel(nodeInfo, i);
+            if (l < 0)
+                continue;
+            if (rep < 0)
+                rep = uf.find(l);
+            else if (uf.unite(l, rep))
+                g_memoscip.SplitMerged++;
+        }
+        return rep;
+    };
+
+    // Parts of the children (the proof of a single child is not used, as in the single proof fusion)
+    vector<ProofPart> cparts[2];
+    vector<int> crep[2];
+    if (twoChildren)
+        for (int c = 0; c < 2; ++c)
+        {
+            cparts[c] = childParts(g_memoscip.nodeInfoMap[children[c]]);
+            for (const ProofPart& p : cparts[c])
+            {
+                const int rep = labelOf(p);
+                crep[c].push_back(rep < 0 ? A : rep);  // a part without unfixed variable at the node goes with the fused component
+            }
+        }
+    // Parts of the node increment
+    vector<ProofPart> incparts;
+    vector<int> increp;
+    if (nodeInfo.lb_increase > 0)
+    {
+        incparts = nodeInfo.IncParts.empty() ? vector<ProofPart>{ partFromNodeProof(nodeInfo) } : nodeInfo.IncParts;
+        // The parts drop their negligible coefficients separately: relax them so that they do not sum above the
+        // increment (lowering a rhs keeps a proof valid)
+        SCIP_Real excess = -nodeInfo.lb_increase;
+        for (const ProofPart& p : incparts)
+            excess += p.rhs;
+        if (excess > 0)
+        {
+            size_t k = 0;
+            for (size_t q = 0; q < incparts.size(); ++q)
+                if (incparts[q].orphan || incparts[q].rhs > incparts[k].rhs)
+                    k = q;
+            incparts[k].rhs -= excess;
+        }
+        for (const ProofPart& p : incparts)
+            increp.push_back(p.orphan ? -1 : labelOf(p));
+    }
+
+    // Sum per component in each child
+    std::map<int, DenseGroup> cgroup[2];
+    for (int c = 0; c < 2 && twoChildren; ++c)
+        for (size_t k = 0; k < cparts[c].size(); ++k)
+            cgroup[c][uf.find(crep[c][k])].add(cparts[c][k], n);
+
+    std::map<int, DenseGroup> res;  // key INT_MIN: orphan increment parts
+    bool infeasibleFusion = false;
+    if (twoChildren)
+    {
+        A = uf.find(A);
+        const bool firstIsOne = g_memoscip.nodeInfoMap[children[0]].BranchVal;
+        DenseGroup& gOne = cgroup[firstIsOne ? 0 : 1][A];
+        DenseGroup& gZero = cgroup[firstIsOne ? 1 : 0][A];
+        gOne.ensure(n);
+        gZero.ensure(n);
+        DenseGroup& fused = res[A];
+        if (gOne.rhs > 0 && gZero.rhs > 0)
+        {
+            fuseDense(gOne, gZero, v, branchVarShifted, fused);
+            infeasibleFusion = isInfeasibilityRhs(fused.rhs);
+            if (infeasibleFusion)
+                SCIP_CALL( queueInfeasibilityClause(scip, nodenumber, fused.c, fused.rhs) );
+        }
+        else
+            fused.ensure(n);
+        // Other components: the same sub-problem in both children, keep the strongest proof
+        std::map<int, const DenseGroup*> best;
+        for (int c = 0; c < 2; ++c)
+            for (auto& [root, g] : cgroup[c])
+            {
+                if (root == A)
+                    continue;
+                auto it = best.find(root);
+                if (it == best.end() || g.rhs > it->second->rhs)
+                    best[root] = &g;
+            }
+        for (auto& [root, g] : best)
+        {
+            res[root].add(*g, n);
+            g_memoscip.SplitPassengers++;
+        }
+    }
+    for (size_t k = 0; k < incparts.size(); ++k)
+    {
+        const int key = increp[k] < 0 ? INT_MIN : uf.find(increp[k]);
+        res[key].add(incparts[k], n);
+    }
+
+    SCIP_Real rhs_summed = 0.0;
+    for (auto& [key, g] : res)
+        rhs_summed += g.rhs;
+    for (auto& [key, g] : res)
+    {
+        g.ensure(n);
+        applyBoundPropagationRemovals(nodenumber, g.c, rhs_summed);
+    }
+    checkSummedRhs(nodenumber, children, rhs_summed, infeasibleFusion);
+    rhs_summed = 0.0;
+    vector<SCIP_Real> total(n, 0.0);
+    for (auto& [key, g] : res)
+    {
+        dropNegligibleCoefs(scip, g.c, g.rhs);
+        rhs_summed += g.rhs;
+        for (size_t i = 0; i < n; ++i)
+            total[i] += g.c[i];
+    }
+    if (g_options.debug)
+        for (size_t i = 0; i < n; ++i)
+            if (total[i] != 0.0)
+                assert( i >= g_memoscip.nodeInfoMap[parentNumber].redcosts.size() || total[i]- g_memoscip.nodeInfoMap[parentNumber].redcosts[i]<1e-3 || g_memoscip.VarUb[i] == 0);
+
+    // Cut of the fused component
+    if (twoChildren && res[A].rhs > 0 && !isInfeasibilityRhs(res[A].rhs))
+    {
+        const NodeInfo& c0 = g_memoscip.nodeInfoMap[children[0]];
+        const NodeInfo& c1 = g_memoscip.nodeInfoMap[children[1]];
+        if (g_options.learning == 3 || nodeInfo.lb_increase > 0
+            || (g_memoscip.nodeInfoMap[parentNumber].lb_increase == 0 && (c0.lb_increase > 0 || c1.lb_increase > 0)))
+        {
+            vector<SCIP_Real> cut = res[A].c;
+            SCIP_Real rhs_ctr = res[A].rhs;
+            for (size_t i = 0; i < n; i++)
+                if (cut[i] != 0.0)
+                    reduceComplementaryCoefs(scip, cut, i, rhs_ctr);
+            dropNegligibleCoefs(scip, cut, rhs_ctr);
+            vector<SCIP_VAR*> vars;
+            vector<SCIP_Real> coefs;
+            for (size_t i = 0; i < n; i++)
+                if (cut[i] != 0.0)
+                {
+                    vars.push_back(g_memoscip.AllVars[i]);
+                    coefs.push_back(cut[i]);
+                }
+            assert(!vars.empty() || rhs_ctr <= 1e-6*max(1.0,fabs(res[A].rhs)));
+            if (!vars.empty())
+            {
+                char name[100];
+                snprintf(name, 100, "cut_%lld_%d", nodenumber, SCIPgetDepth(scip));
+                SCIP_CALL( SCIPqueueCut(scip, name, (int)vars.size(), vars.data(), coefs.data(), rhs_ctr, rhs_ctr,
+                    &g_memoscip.CutQueue) );
+            }
+        }
+    }
+
+    // Stored proof of the node: its parts and their sum
+    nodeInfo.Parts.clear();
+    for (auto& [key, g] : res)
+    {
+        ProofPart p;
+        p.rhs = g.rhs;
+        p.orphan = (key == INT_MIN);
+        for (size_t i = 0; i < n; ++i)
+            if (g.c[i] != 0.0)
+            {
+                p.inds.push_back((int)i);
+                p.coefs.push_back(g.c[i]);
+            }
+        if (!p.inds.empty() || p.rhs != 0.0)
+            nodeInfo.Parts.push_back(std::move(p));
+    }
+    nodeInfo.HasParts = true;
+    nodeInfo.DualProofInds.clear();
+    nodeInfo.DualProofCoef.first.clear();
+    for (size_t i = 0; i < n; ++i)
+        if (total[i] != 0.0)
+        {
+            nodeInfo.DualProofInds.push_back((int)i);
+            nodeInfo.DualProofCoef.first.push_back(total[i]);
+        }
+    nodeInfo.DualProofCoef.second = rhs_summed;
+    assert(nodeInfo.lb_increase<=rhs_summed+1e-6*max(1.0,fabs(rhs_summed)));
+    nodeInfo.lb_increase = rhs_summed;
+    assert(Myceil(g_memoscip.nodeInfoMap[parentNumber].lb + nodeInfo.lb_increase) >= MyPrimalbound(scip)-1 ||SCIPisInfinity(scip, MyPrimalbound(scip)) );
+    g_memoscip.SplitNodes++;
+    return SCIP_OKAY;
+}
+
 static
 SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
 {
@@ -643,6 +973,15 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
 
     vector<long> children = nodeInfo.children;
     if (g_memoscip.nbAddedctr<(int)g_options.nbslack && (nodeInfo.lb_increase != 0 || children.size()==2) ) {
+        if(g_options.splitProofs){
+            bool handled = false;
+            SCIP_CALL( splitNodeDelete(scip, nodenumber, parentNumber, children, handled) );
+            if(handled){
+                eraseChildren(nodenumber, children);
+                return SCIP_OKAY;
+            }
+            g_memoscip.SplitFallback++;
+        }
 
         vector<SCIP_Real> ResFus(g_memoscip.AllVars.size(),0.0);
         SCIP_Real rhsFus=0;
@@ -1348,7 +1687,10 @@ SCIP_DECL_BRANCHEXECLP(branchExecLP)
                 continue;
 
             SCIP_Real x = SCIPgetSolVal(scip, nullptr, v);  // current LP solution value
-            if( !SCIPisFeasIntegral(scip, x) )
+            // With -os the first unfixed variable is branched on even if its LP value is integral
+            const bool candidate = g_options.strictOrder ? SCIPvarGetLbLocal(v) < SCIPvarGetUbLocal(v)
+                                                         : !SCIPisFeasIntegral(scip, x);
+            if( candidate )
             {
                 SCIP_NODE* downchild = nullptr;
                 SCIP_NODE* eqchild   = nullptr;
@@ -1356,9 +1698,16 @@ SCIP_DECL_BRANCHEXECLP(branchExecLP)
 
                 SCIP_CALL( SCIPbranchVarVal(scip, v, 1, &downchild, &eqchild, &upchild) );
                 *result = SCIP_BRANCHED;
+                // With -os an integral variable is explored first on its LP value (down child x <= 0, eq child x = 1)
+                if( g_options.strictOrder && SCIPisFeasIntegral(scip, x) && downchild != nullptr && eqchild != nullptr )
+                {
+                    const bool lpIsOne = x > 0.5;
+                    SCIP_CALL( SCIPchgChildPrio(scip, eqchild, lpIsOne ? 1.0 : 0.0) );
+                    SCIP_CALL( SCIPchgChildPrio(scip, downchild, lpIsOne ? 0.0 : 1.0) );
+                }
 
                 if(g_options.verbosity > 1)
-                    cout << "Branching on first fractional var " << SCIPvarGetName(v) << " x=" << x << " probindex=" << SCIPvarGetProbindex(v) << endl;
+                    cout << "Branching on first " << (g_options.strictOrder ? "unfixed" : "fractional") << " var " << SCIPvarGetName(v) << " x=" << x << " probindex=" << SCIPvarGetProbindex(v) << endl;
                 return SCIP_OKAY;
             }
         }

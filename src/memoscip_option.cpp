@@ -107,6 +107,11 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
     {
         return parse_int_suffix("-encoding", s + 9, out.encoding, errMsg);
     }
+    if (std::strcmp(s, "-subslack") == 0)
+    {
+        out.subSlack = true;
+        return true;
+    }
     if (std::strcmp(s, "-sep") == 0)
     {
         out.sepa = true;
@@ -278,6 +283,8 @@ void print_memoscip_usage(const char* programName)
         << "  -order=F   Branch on the variables in the order of file F (names separated by spaces/newlines, '#' comments;\n"
         << "             an XCSP variable name stands for all its value variables), with the custom branching (-b=0)\n"
         << "  -w=N       Weaken constraints (0 = no weakening, 1 = weaken constraints)\n"
+        << "  -subslack  When adding a learned cut, substitute the slacks of earlier learned cuts by their definition\n"
+        << "             (sc_k = a_k x - b_k); the dual proofs passed to the parent nodes are unchanged\n"
         << "  -ub=F      Initial primal bound: objective limit F (only solutions strictly better are accepted)\n"
         << "  -os        Strict order: branch on the first unfixed variable of the order, even if its LP value is integral\n"
         << "  -comp      Keep the parent duals on the LP components not touched by the node decision (removes dual noise)\n"

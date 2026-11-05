@@ -54,6 +54,8 @@ struct MemoSCIPRunOptions {
 
     int Weaken = 0; // 0 = no weakening, 1 = weaken constraints
 
+    bool subSlack = false; // True = substitute the learned slacks by their definition in a cut when it is added
+
     /** Remove the dual noise per connected component of the node LP (-comp): the rows of the components the node
      *  decision does not touch keep the parent duals. */
     bool dualComponents = false;

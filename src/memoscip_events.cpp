@@ -684,14 +684,16 @@ void fuseDense(const DenseGroup& one, const DenseGroup& zero, int v, int branchV
  *  component of the node LP: the parts of the component of the branching variable are summed in each child and
  *  fused, the parts of the other components (the same sub-problem in both children) are passed from the child where
  *  their rhs is the largest, and the parts of the node increment are added to their component. Only the fused
- *  component is learned as a cut. handled is false when the node is left to the single proof fusion (no component
- *  labels, node consistency removals, learning 2 or 4, branching variable without component). */
+ *  component is learned as a cut; with learning 4 it is learned at every node with two children, and at a node with
+ *  one child or none each component of its increment with rhs > 0 is learned. handled is false when the node is left
+ *  to the single proof fusion (no component labels, node consistency removals, learning 2, branching variable without
+ *  component). */
 static SCIP_RETCODE splitNodeDelete(SCIP* scip, SCIP_Longint nodenumber, SCIP_Longint parentNumber,
     const vector<long>& children, bool& handled)
 {
     handled = false;
     NodeInfo& nodeInfo = g_memoscip.nodeInfoMap[nodenumber];
-    if (g_options.learning == 2 || g_options.learning == 4 || !nodeInfo.NodeConsistency.empty() || nodeInfo.CompLabel.empty())
+    if (g_options.learning == 2 || !nodeInfo.NodeConsistency.empty() || nodeInfo.CompLabel.empty())
         return SCIP_OKAY;
     const size_t n = g_memoscip.AllVars.size();
     const bool twoChildren = children.size() == 2;
@@ -742,7 +744,10 @@ static SCIP_RETCODE splitNodeDelete(SCIP* scip, SCIP_Longint nodenumber, SCIP_Lo
     // Parts of the node increment
     vector<ProofPart> incparts;
     vector<int> increp;
-    if (nodeInfo.lb_increase > 0)
+    // With two children, also when the bound did not increase (lb increase 0 up to noise): if the duals changed, the
+    // increment carries the fused coefficients (bounded by the reduced costs of the node) back to the reduced costs of
+    // the parent. With one child or none the proof is the increment alone, useless when its rhs is not positive
+    if (nodeInfo.lb_increase > 0 || (twoChildren && !nodeInfo.IncParts.empty()))
     {
         incparts = nodeInfo.IncParts.empty() ? vector<ProofPart>{ partFromNodeProof(nodeInfo) } : nodeInfo.IncParts;
         // The parts drop their negligible coefficients separately: relax them so that they do not sum above the
@@ -760,6 +765,36 @@ static SCIP_RETCODE splitNodeDelete(SCIP* scip, SCIP_Longint nodenumber, SCIP_Lo
         }
         for (const ProofPart& p : incparts)
             increp.push_back(p.orphan ? -1 : labelOf(p));
+    }
+
+    // -v4: the parts of the children and of the node increment, by component (named by a variable of the component)
+    const bool verbose = g_options.verbosity > 3;
+    auto compName = [&](int key) -> string {
+        if (key == INT_MIN) return "orphan";
+        if (key < 0) return "none";
+        return string(SCIPvarGetName(g_memoscip.AllVars[uf.find(key)]));
+    };
+    if (verbose)
+    {
+        cout << "[split] delete node " << nodenumber << " (parent " << parentNumber << ", " << children.size() << " children";
+        if (twoChildren)
+            cout << ", branching on " << SCIPvarGetName(g_memoscip.AllVars[v]) << ", fused component " << compName(A);
+        cout << "), node lb increase " << nodeInfo.lb_increase << endl;
+        for (int c = 0; c < 2 && twoChildren; ++c)
+        {
+            const NodeInfo& ci = g_memoscip.nodeInfoMap[children[c]];
+            SCIP_Real sum = 0.0;
+            for (const ProofPart& p : cparts[c])
+                sum += p.rhs;
+            cout << "[split]   child " << children[c] << " (" << SCIPvarGetName(g_memoscip.AllVars[v]) << " = " << ci.BranchVal
+                 << "): " << cparts[c].size() << " parts, rhs sum " << sum << endl;
+            for (size_t k = 0; k < cparts[c].size(); ++k)
+                cout << "[split]     part " << k << " component " << compName(crep[c][k]) << " rhs " << cparts[c][k].rhs
+                     << " (" << cparts[c][k].inds.size() << " terms" << (cparts[c][k].orphan ? ", orphan" : "") << ")" << endl;
+        }
+        for (size_t k = 0; k < incparts.size(); ++k)
+            cout << "[split]   increment part " << k << " component " << compName(increp[k] < 0 ? INT_MIN : increp[k])
+                 << " rhs " << incparts[k].rhs << " (" << incparts[k].inds.size() << " terms)" << endl;
     }
 
     // Sum per component in each child
@@ -788,20 +823,33 @@ static SCIP_RETCODE splitNodeDelete(SCIP* scip, SCIP_Longint nodenumber, SCIP_Lo
         }
         else
             fused.ensure(n);
+        if (verbose)
+            cout << "[split]   component " << compName(A) << " (fused): rhs " << gOne.rhs << " in child "
+                 << children[firstIsOne ? 0 : 1] << " (=1), " << gZero.rhs << " in child " << children[firstIsOne ? 1 : 0]
+                 << " (=0) -> " << fused.rhs << ((gOne.rhs > 0 && gZero.rhs > 0) ? "" : " (not fused: a child has rhs <= 0)")
+                 << (infeasibleFusion ? " (infeasibility)" : "") << endl;
         // Other components: the same sub-problem in both children, keep the strongest proof
-        std::map<int, const DenseGroup*> best;
+        std::map<int, std::pair<int, const DenseGroup*>> best;  // child index, its part
         for (int c = 0; c < 2; ++c)
             for (auto& [root, g] : cgroup[c])
             {
                 if (root == A)
                     continue;
                 auto it = best.find(root);
-                if (it == best.end() || g.rhs > it->second->rhs)
-                    best[root] = &g;
+                if (it == best.end() || g.rhs > it->second.second->rhs)
+                    best[root] = { c, &g };
             }
-        for (auto& [root, g] : best)
+        for (auto& [root, cg] : best)
         {
-            res[root].add(*g, n);
+            if (verbose)
+            {
+                auto other = cgroup[1 - cg.first].find(root);
+                cout << "[split]   component " << compName(root) << " (passenger): rhs " << cg.second->rhs << " from child "
+                     << children[cg.first] << ", other child "
+                     << (other == cgroup[1 - cg.first].end() ? string("has no part") : "rhs " + std::to_string(other->second.rhs))
+                     << endl;
+            }
+            res[root].add(*cg.second, n);
             g_memoscip.SplitPassengers++;
         }
     }
@@ -834,36 +882,59 @@ static SCIP_RETCODE splitNodeDelete(SCIP* scip, SCIP_Longint nodenumber, SCIP_Lo
             if (total[i] != 0.0)
                 assert( i >= g_memoscip.nodeInfoMap[parentNumber].redcosts.size() || total[i]- g_memoscip.nodeInfoMap[parentNumber].redcosts[i]<1e-3 || g_memoscip.VarUb[i] == 0);
 
-    // Cut of the fused component
-    if (twoChildren && res[A].rhs > 0 && !isInfeasibilityRhs(res[A].rhs))
-    {
-        const NodeInfo& c0 = g_memoscip.nodeInfoMap[children[0]];
-        const NodeInfo& c1 = g_memoscip.nodeInfoMap[children[1]];
-        if (g_options.learning == 3 || nodeInfo.lb_increase > 0
-            || (g_memoscip.nodeInfoMap[parentNumber].lb_increase == 0 && (c0.lb_increase > 0 || c1.lb_increase > 0)))
-        {
-            vector<SCIP_Real> cut = res[A].c;
-            SCIP_Real rhs_ctr = res[A].rhs;
-            for (size_t i = 0; i < n; i++)
-                if (cut[i] != 0.0)
-                    reduceComplementaryCoefs(scip, cut, i, rhs_ctr);
-            dropNegligibleCoefs(scip, cut, rhs_ctr);
-            vector<SCIP_VAR*> vars;
-            vector<SCIP_Real> coefs;
-            for (size_t i = 0; i < n; i++)
-                if (cut[i] != 0.0)
-                {
-                    vars.push_back(g_memoscip.AllVars[i]);
-                    coefs.push_back(cut[i]);
-                }
-            assert(!vars.empty() || rhs_ctr <= 1e-6*max(1.0,fabs(res[A].rhs)));
-            if (!vars.empty())
+    // Learned cuts. A cut is learned from the dense proof of one component
+    auto learnCut = [&](int key, const DenseGroup& g, const char* suffix) -> SCIP_RETCODE {
+        vector<SCIP_Real> cut = g.c;
+        SCIP_Real rhs_ctr = g.rhs;
+        for (size_t i = 0; i < n; i++)
+            if (cut[i] != 0.0)
+                reduceComplementaryCoefs(scip, cut, i, rhs_ctr);
+        dropNegligibleCoefs(scip, cut, rhs_ctr);
+        vector<SCIP_VAR*> vars;
+        vector<SCIP_Real> coefs;
+        for (size_t i = 0; i < n; i++)
+            if (cut[i] != 0.0)
             {
-                char name[100];
-                snprintf(name, 100, "cut_%lld_%d", nodenumber, SCIPgetDepth(scip));
-                SCIP_CALL( SCIPqueueCut(scip, name, (int)vars.size(), vars.data(), coefs.data(), rhs_ctr, rhs_ctr,
-                    &g_memoscip.CutQueue) );
+                vars.push_back(g_memoscip.AllVars[i]);
+                coefs.push_back(cut[i]);
             }
+        assert(!vars.empty() || rhs_ctr <= 1e-6*max(1.0,fabs(g.rhs)));
+        if (!vars.empty())
+        {
+            char name[100];
+            snprintf(name, 100, "cut_%lld_%d%s", nodenumber, SCIPgetDepth(scip), suffix);
+            SCIP_CALL( SCIPqueueCut(scip, name, (int)vars.size(), vars.data(), coefs.data(), rhs_ctr, rhs_ctr,
+                &g_memoscip.CutQueue) );
+            if (verbose)
+                cout << "[split]   cut " << name << " from component " << compName(key) << ": rhs " << rhs_ctr << ", "
+                     << vars.size() << " terms" << endl;
+        }
+        return SCIP_OKAY;
+    };
+    if (twoChildren)
+    {
+        // Cut of the fused component (learning 4: at every node with two children)
+        if (res[A].rhs > 0 && !isInfeasibilityRhs(res[A].rhs))
+        {
+            const NodeInfo& c0 = g_memoscip.nodeInfoMap[children[0]];
+            const NodeInfo& c1 = g_memoscip.nodeInfoMap[children[1]];
+            if (g_options.learning == 3 || g_options.learning == 4 || nodeInfo.lb_increase > 0
+                || (g_memoscip.nodeInfoMap[parentNumber].lb_increase == 0 && (c0.lb_increase > 0 || c1.lb_increase > 0)))
+                SCIP_CALL( learnCut(A, res[A], "") );
+        }
+    }
+    else if (g_options.learning == 4)
+    {
+        // Learning 4, node with one child or none: its proof is its own increment, one cut per component with rhs > 0
+        // (the orphan part, on variables fixed at this node only, is not learned on its own)
+        int k = 0;
+        for (auto& [key, g] : res)
+        {
+            if (key == INT_MIN || g.rhs <= 0 || isInfeasibilityRhs(g.rhs))
+                continue;
+            char suffix[32];
+            snprintf(suffix, 32, "_c%d", k++);
+            SCIP_CALL( learnCut(key, g, suffix) );
         }
     }
 
@@ -880,6 +951,9 @@ static SCIP_RETCODE splitNodeDelete(SCIP* scip, SCIP_Longint nodenumber, SCIP_Lo
                 p.inds.push_back((int)i);
                 p.coefs.push_back(g.c[i]);
             }
+        if (verbose)
+            cout << "[split]   kept part: component " << compName(key) << " rhs " << p.rhs << " (" << p.inds.size() << " terms"
+                 << (twoChildren && key == A ? ", fused" : "") << ")" << endl;
         if (!p.inds.empty() || p.rhs != 0.0)
             nodeInfo.Parts.push_back(std::move(p));
     }
@@ -893,6 +967,9 @@ static SCIP_RETCODE splitNodeDelete(SCIP* scip, SCIP_Longint nodenumber, SCIP_Lo
             nodeInfo.DualProofCoef.first.push_back(total[i]);
         }
     nodeInfo.DualProofCoef.second = rhs_summed;
+    if (verbose)
+        cout << "[split]   node " << nodenumber << " proof rhs " << rhs_summed << " (lb increase before " << nodeInfo.lb_increase
+             << "), passed to parent " << parentNumber << endl;
     assert(nodeInfo.lb_increase<=rhs_summed+1e-6*max(1.0,fabs(rhs_summed)));
     nodeInfo.lb_increase = rhs_summed;
     assert(Myceil(g_memoscip.nodeInfoMap[parentNumber].lb + nodeInfo.lb_increase) >= MyPrimalbound(scip)-1 ||SCIPisInfinity(scip, MyPrimalbound(scip)) );
@@ -1077,6 +1154,13 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
          if(g_options.verbosity > 2){
             cout<<"drop res "<<endl;
             printProof(scip, ResFus, ">=", rhs_summed, true);
+        }
+        if(g_options.verbosity > 3){
+            cout<<"[proof] delete node "<<nodenumber<<" (parent "<<parentNumber<<", "<<children.size()<<" children): node lb increase "
+                <<nodeInfo.lb_increase;
+            for(long child : children)
+                cout<<", child "<<child<<" rhs "<<g_memoscip.nodeInfoMap[child].DualProofCoef.second;
+            cout<<", fused rhs "<<rhsFus<<" -> node proof rhs "<<rhs_summed<<" passed to parent "<<parentNumber<<endl;
         }
         // The proof of the node (before reduction) is kept to be fused at its parent
         vector<int> Inds;

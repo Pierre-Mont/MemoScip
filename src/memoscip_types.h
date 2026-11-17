@@ -6,6 +6,7 @@
 #include "sepa_mycuts.h"
 
 #include <chrono>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -35,7 +36,11 @@ struct ProofPart {
 
 struct NodeInfo {
     int number = 0;
+    // lb_increase is the proven bound increase (LP gain, or subtree gain once the node is deleted) and
+    // DualProofCoef.second the rhs of the stored proof. dropNegligibleCoefs lowers the rhs to stay valid, so the two
+    // differ: drop_loss is an upper bound on lb_increase - DualProofCoef.second (>= 0), used by the debug checks
     SCIP_Real lb_increase = 0.0;
+    SCIP_Real drop_loss = 0.0;
     SCIP_Real lb = 0.0;
     SCIP_Real ub = 0.0;
     bool visited = false;
@@ -55,6 +60,7 @@ struct NodeInfo {
 
     std::vector<SCIP_Real> y_i;   // dual solution of constraints x_i<=1. Based on AllVars index. y_i[i] = dual solution of constraint AllVars[i]<=1
     std::vector<SCIP_Real> redcosts; // redcosts based on AllVars index. redcosts[i] = redcost of AllVars[i]
+    std::vector<SCIP_Real> LPSol;  // option -mir: primal LP solution of the node (AllVars index), reference point of its cuts
     std::vector<SCIP_Real> LPLb, LPUb;  // with -comp: local bounds (AllVars index) of the LP whose duals are DualSol
     // Option -split
     std::vector<std::pair<int,int>> CompLabel;  // sorted (AllVars index, component id) of the unfixed columns of the node LP
@@ -96,8 +102,19 @@ struct MemoSCIPContext {
     std::vector<char> SlackHasDef;
     std::vector<std::vector<std::pair<int, SCIP_Real>>> SlackDefTerms;
     std::vector<SCIP_Real> SlackDefRhs;
+    // Option -submodel: slacks of model inequalities (slack_<i>) whose definition is in SlackDef*. They are substituted
+    // whatever the sign of their coefficient (an identity), unlike learned slacks whose negative terms are dropped.
+    std::vector<char> SlackIsModel;
     long long nbSubstCuts = 0;    // cuts in which at least one learned slack was substituted
     long long nbSubstTrivial = 0; // substituted cuts skipped because trivial
+    // Option -mir: learned cuts for which a c-MIR cut was computed, added, equal to the cut, or not found
+    long long nbMirTried = 0;
+    long long nbMirAdded = 0;
+    long long nbMirSame = 0;
+    long long nbMirFailed = 0;
+    long long nbMirWeaker = 0;       // MIR cut not more efficacious than the learned cut on the node LP solution
+    long long nbMirCutViolated = 0;  // learned cuts violated by the LP solution of their node
+    long long nbMirViolated = 0;     // MIR cuts violated by the LP solution of their node
 
 
     // Option -comp: nodes whose duals were mixed per connected component, kept unchanged, or not mixed (bound check failed)
@@ -160,6 +177,15 @@ inline SCIP_Real equalityRowValue(SCIP* scip, SCIP_ROW* row)
     if (isDiveRelaxedRow(row) && SCIPisInfinity(scip, SCIProwGetRhs(row)))
         return SCIProwGetLhs(row);
     return SCIProwGetRhs(row);
+}
+
+/** Learned cut rows are recognised by the names given to the cuts queued with SCIPqueueCut ("cut_*", "l2cut_*",
+ *  "clause_*"): sepa_mycuts appends their slack sc_<k> as the last variable. Model rows can have as many nonzeros
+ *  (e.g. a tuple marginal has d+1, a tuple sum d*d with encoding 1), so the size of a row does not identify a cut. */
+inline bool isLearnedCutRow(SCIP_ROW* row)
+{
+    const char* name = SCIProwGetName(row);
+    return std::strncmp(name, "cut_", 4) == 0 || std::strncmp(name, "l2cut_", 6) == 0 || std::strncmp(name, "clause_", 7) == 0;
 }
 
 /** Slack variables are recognised by their name: "slack_*", "sc_*", or the transformed "t_slack_*", "t_sc_*". */

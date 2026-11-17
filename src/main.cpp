@@ -332,6 +332,97 @@ static bool applyOrderFile(SCIP* scip, const string& path, const vector<string>&
     return true;
 }
 
+/** Item of a variable: its name without the "t_" prefix of the transformed variables and without the "_0" / "_1"
+ *  suffix, so that x<i>_0 and x<i>_1 (or d<i>_0 and d<i>_1) share the item x<i> (d<i>). */
+static string knapsackItemName(SCIP_VAR* var)
+{
+    string name = SCIPvarGetName(var);
+    if (name.starts_with("t_"))
+        name = name.substr(2);
+    if (name.ends_with("_0") || name.ends_with("_1"))
+        name.resize(name.size() - 2);
+    return name;
+}
+
+/** Option -korder. A capacity constraint is a linear constraint turned into an equality by addSlackVariables (it has a
+ *  slack_<i>) whose other variables all have a nonzero objective coefficient and coefficients of the same sign: the
+ *  knapsack row sum w_i x_i >= sum w - c of the readers (x_i = item i not taken, objective = its profit) or a
+ *  sum w_i x_i <= c form. The domain, conflict and tuple constraints have variables without cost and are not detected.
+ *  The weighted profit of an item is |profit| / sum over the capacity rows of w_i / (total weight of the row), i.e.
+ *  profit / weight with a single capacity constraint. g_memoscip.OrderVar is stably sorted by decreasing weighted
+ *  profit of the item of each variable (both literals of an item get its value); the variables of no item keep their
+ *  relative order at the end. Returns false if no capacity constraint is found. */
+static bool applyKnapsackOrder(SCIP* scip, string& err)
+{
+    unordered_map<string, SCIP_Real> profit, weight;
+    int ncapacity = 0;
+    SCIP_CONS** conss = SCIPgetConss(scip);
+    const int nconss = SCIPgetNConss(scip);
+    for (int c = 0; c < nconss; ++c)
+    {
+        SCIP_CONS* cons = conss[c];
+        if (strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), "linear") != 0)
+            continue;
+        SCIP_VAR** vars = SCIPgetVarsLinear(scip, cons);
+        SCIP_Real* vals = SCIPgetValsLinear(scip, cons);
+        const int nvars = SCIPgetNVarsLinear(scip, cons);
+        bool hasSlack = false, capacity = true;
+        int sign = 0, nitems = 0;
+        SCIP_Real total = 0.0;
+        for (int k = 0; k < nvars && capacity; ++k)
+        {
+            if (isSlackVar(vars[k])) {
+                hasSlack = true;
+                continue;
+            }
+            const int s = vals[k] > 0.0 ? 1 : -1;
+            if (SCIPisZero(scip, SCIPvarGetObj(vars[k])) || vals[k] == 0.0 || (sign != 0 && s != sign))
+                capacity = false;
+            sign = s;
+            total += fabs(vals[k]);
+            nitems++;
+        }
+        if (!hasSlack || !capacity || nitems < 2)
+            continue;
+        ncapacity++;
+        if (g_options.verbosity > 0)
+            cout << "-korder: capacity constraint " << SCIPconsGetName(cons) << " (" << nitems << " items)" << endl;
+        for (int k = 0; k < nvars; ++k)
+        {
+            if (isSlackVar(vars[k]))
+                continue;
+            const string item = knapsackItemName(vars[k]);
+            profit[item] = fabs(SCIPvarGetObj(vars[k]));
+            weight[item] += fabs(vals[k]) / total;
+        }
+    }
+    if (ncapacity == 0) {
+        err = "no capacity constraint found";
+        return false;
+    }
+
+    auto key = [&](SCIP_VAR* v) {
+        auto it = weight.find(knapsackItemName(v));
+        if (it == weight.end())
+            return -1.0;  // not an item: after the items
+        return it->second > 0.0 ? profit[it->first] / it->second : SCIPinfinity(scip);
+    };
+    vector<pair<SCIP_Real, SCIP_VAR*>> keyed;
+    for (SCIP_VAR* v : g_memoscip.OrderVar)
+        keyed.emplace_back(key(v), v);
+    stable_sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (size_t i = 0; i < keyed.size(); ++i)
+        g_memoscip.OrderVar[i] = keyed[i].second;
+    cout << "-korder: " << ncapacity << " capacity constraint(s), " << weight.size() << " items ordered by profit / weight" << endl;
+    if (g_options.verbosity > 1) {
+        cout << "-korder: order";
+        for (const auto& [k, v] : keyed)
+            cout << " " << SCIPvarGetName(v) << "(" << k << ")";
+        cout << endl;
+    }
+    return true;
+}
+
 static void printStatistics(SCIP* scip)
 {
     cout<<"Solving Status : "<<SCIPgetStatus(scip)<<endl;
@@ -340,8 +431,12 @@ static void printStatistics(SCIP* scip)
     cout<<"Primal bound : "<<SCIPgetPrimalbound(scip)<<endl;
     cout<<"Dual bound : "<<SCIPgetDualbound(scip)<<endl;
     cout<<"Number of learned cuts : "<<g_memoscip.nbAddedctr<<endl;
-    if(g_options.subSlack)
+    if(g_options.subSlack || g_options.subModelSlack)
         cout<<"Slack substitution : "<<g_memoscip.nbSubstCuts<<" cuts substituted, "<<g_memoscip.nbSubstTrivial<<" skipped as trivial"<<endl;
+    if(g_options.mir)
+        cout<<"MIR cuts : "<<g_memoscip.nbMirTried<<" tried, "<<g_memoscip.nbMirAdded<<(g_options.mir==2 ? " replaced the learned cut, " : " added, ")<<g_memoscip.nbMirSame
+            <<" equal to the learned cut, "<<g_memoscip.nbMirWeaker<<" not stronger, "<<g_memoscip.nbMirFailed<<" not found"<<endl
+            <<"  violated by the node LP solution : learned cuts "<<g_memoscip.nbMirCutViolated<<", MIR cuts "<<g_memoscip.nbMirViolated<<endl;
     cout<<"Gap : "<<SCIPgetGap(scip)<<endl;
     if (g_options.dualComponents)
         cout<<"Dual component mixing : applied "<<g_memoscip.DualMixApplied<<" unchanged "<<g_memoscip.DualMixUnchanged
@@ -397,6 +492,10 @@ int main(int argc, char** argv)
         print_memoscip_usage(argv[0] ? argv[0] : "memobound");
         return 1;
     }
+    // Without bound propagation SCIP does not fix a value whose domain constraint is decided (x_0 = 0 => x_1 = 1):
+    // -os then branches on it, the tracked bounds become inconsistent and learning gives wrong optima
+    if (g_options.strictOrder && !g_options.BC)
+        std::cerr << "Warning: -os must always be run with -BC (without bound propagation the learned cuts can be invalid)" << std::endl;
 
     string filepath = g_options.instancePath;
     string fileext = filesystem::path(filepath).extension().string();
@@ -470,6 +569,10 @@ int main(int argc, char** argv)
     // The objective coefficients are the reduced costs of the virtual node 0 (parent of the root)
     vector<SCIP_Real> objcoefs;
     SCIP_CALL( setBranchingOrder(scip, objcoefs) );
+    if (g_options.knapsackOrder && !g_options.orderFile.empty()) {
+        std::cerr << "Error: -korder and -order cannot be used together" << std::endl;
+        return 1;
+    }
     if (!g_options.orderFile.empty()) {
         std::string oerr;
         if (!applyOrderFile(scip, g_options.orderFile, cspVarNames, oerr)) {
@@ -478,6 +581,15 @@ int main(int argc, char** argv)
         }
         if (g_options.branchingHeuristic != 0)
             std::cerr << "Warning: the order file is only used by the custom branching rule (-b=0)" << std::endl;
+    }
+    if (g_options.knapsackOrder) {
+        std::string kerr;
+        if (!applyKnapsackOrder(scip, kerr)) {
+            std::cerr << "Error with -korder: " << kerr << std::endl;
+            return 1;
+        }
+        if (g_options.branchingHeuristic != 0)
+            std::cerr << "Warning: -korder is only used by the custom branching rule (-b=0)" << std::endl;
     }
     g_memoscip.nodeInfoMap[0].redcosts=objcoefs;
 

@@ -107,6 +107,27 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
     {
         return parse_int_suffix("-encoding", s + 9, out.encoding, errMsg);
     }
+    if (std::strcmp(s, "-mir") == 0)
+    {
+        out.mir = 1;
+        return true;
+    }
+    if (matches_value_flag(s, "-mir"))
+    {
+        if (!parse_int_flag(s, "-mir", "-mir requires an integer value (e.g. -mir=2)", out.mir, errMsg))
+            return false;
+        if (out.mir < 0 || out.mir > 2)
+        {
+            errMsg = "-mir must be 0, 1 or 2";
+            return false;
+        }
+        return true;
+    }
+    if (std::strcmp(s, "-submodel") == 0)
+    {
+        out.subModelSlack = true;
+        return true;
+    }
     if (std::strcmp(s, "-subslack") == 0)
     {
         out.subSlack = true;
@@ -136,6 +157,11 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
     if (std::strcmp(s, "-fl") == 0)
     {
         out.finish_Learn = true;
+        return true;
+    }
+    if (std::strcmp(s, "-korder") == 0)
+    {
+        out.knapsackOrder = true;
         return true;
     }
     if (std::strncmp(s, "-order", 6) == 0)
@@ -283,10 +309,18 @@ void print_memoscip_usage(const char* programName)
         << "  -order=F   Branch on the variables in the order of file F (names separated by spaces/newlines, '#' comments;\n"
         << "             an XCSP variable name stands for all its value variables), with the custom branching (-b=0)\n"
         << "  -w=N       Weaken constraints (0 = no weakening, 1 = weaken constraints)\n"
+        << "  -submodel  When adding a learned cut, substitute the slacks of the model inequalities by their definition\n"
+        << "             (slack_i = a_i x - b_i, both signs); the dual proofs passed to the parent nodes are unchanged\n"
         << "  -subslack  When adding a learned cut, substitute the slacks of earlier learned cuts by their definition\n"
         << "             (sc_k = a_k x - b_k); the dual proofs passed to the parent nodes are unchanged\n"
         << "  -ub=F      Initial primal bound: objective limit F (only solutions strictly better are accepted)\n"
+        << "  -mir[=N]   MIR cut of each learned cut (global bounds, delta chosen on the LP solution of the node of the cut),\n"
+        << "             kept if more efficacious there: 1 (default for -mir) = added next to the learned cut,\n"
+        << "             2 = replaces the learned cut\n"
+        << "  -korder    Knapsack / KPCG: detect the capacity constraints and branch on the items by decreasing\n"
+        << "             profit / weight (with the custom branching, -b=0; not with -order)\n"
         << "  -os        Strict order: branch on the first unfixed variable of the order, even if its LP value is integral\n"
+        << "             (must always be run with -BC)\n"
         << "  -comp      Keep the parent duals on the LP components not touched by the node decision (removes dual noise)\n"
         << "  -split     One dual proof per LP component: fuse and learn only the component of the branching variable (implies -comp)\n"
         << "  -pc=N      Pseudo objective cutoff proof (0 = always dive, 1 = use pseudo objective proof, default 1)\n"

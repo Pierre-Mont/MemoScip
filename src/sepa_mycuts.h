@@ -15,6 +15,7 @@ struct QueuedCut
    std::vector<SCIP_Real> vals;
    SCIP_Real lhs;
    SCIP_Real rhs;
+   std::vector<SCIP_Real> refvals;  // option -mir: value of each variable in the LP solution of the node of the cut (empty if unknown)
 };
 
 struct MyQueue
@@ -37,7 +38,9 @@ SCIP_RETCODE SCIPqueueCut(
    SCIP_Real* vals,
    SCIP_Real lhs,
    SCIP_Real rhs,
-   MyQueue* q);
+   MyQueue* q,
+   const std::vector<SCIP_Real>* refsol = nullptr  /**< option -mir: LP solution (AllVars index) of the node of the cut */
+   );
 
 SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, double Top,bool sepa, int* nbctr, SCIP_Longint nodenumber, SCIP_SEPA* sepaname);
 

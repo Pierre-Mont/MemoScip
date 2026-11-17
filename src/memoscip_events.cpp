@@ -125,6 +125,57 @@ bool ensure_replay_loaded()
 /* Node solved                                                                                                       */
 /* ---------------------------------------------------------------------------------------------------------------- */
 
+/** Option -submodel: definition s = a.x - b of the slack slack_<i> of each model inequality (added by
+ *  addSlackVariables: a.x - s = lhs for a >= row, a.x + s = rhs for a <= row), stored with the learned slack
+ *  definitions (SlackHasDef, SlackDefTerms, SlackDefRhs) and marked in SlackIsModel. */
+static void registerModelSlackDefs(SCIP* scip)
+{
+    const size_t n = g_memoscip.AllVars.size();
+    g_memoscip.SlackHasDef.resize(n, 0);
+    g_memoscip.SlackDefTerms.resize(n);
+    g_memoscip.SlackDefRhs.resize(n, 0.0);
+    g_memoscip.SlackIsModel.resize(n, 0);
+    int nconss = SCIPgetNConss(scip);
+    SCIP_CONS** conss = SCIPgetConss(scip);
+    int nregistered = 0;
+    for(int i = 0; i < nconss; ++i){
+        SCIP_CONS* cons = conss[i];
+        if(strcmp(SCIPconshdlrGetName(SCIPconsGetHdlr(cons)), "linear") != 0)
+            continue;
+        const SCIP_Real lhs = SCIPgetLhsLinear(scip, cons);
+        const SCIP_Real rhs = SCIPgetRhsLinear(scip, cons);
+        if(!SCIPisEQ(scip, lhs, rhs))
+            continue;
+        SCIP_VAR** vars = SCIPgetVarsLinear(scip, cons);
+        SCIP_Real* vals = SCIPgetValsLinear(scip, cons);
+        const int nvars = SCIPgetNVarsLinear(scip, cons);
+        int slackPos = -1;
+        for(int k = 0; k < nvars; ++k)
+            if(strstr(SCIPvarGetName(vars[k]), "slack_") != nullptr){
+                slackPos = k;
+                break;
+            }
+        if(slackPos < 0 || fabs(fabs(vals[slackPos]) - 1.0) > 1e-12)
+            continue;
+        // sigma*s + a.x = rhs with sigma = +-1  =>  s = (-sigma*a).x - (-sigma*rhs)
+        const SCIP_Real sigma = vals[slackPos];
+        const int sidx = allVarsIndex(vars[slackPos]);
+        std::vector<std::pair<int, SCIP_Real>> terms;
+        for(int k = 0; k < nvars; ++k)
+            if(k != slackPos && vals[k] != 0.0)
+                terms.emplace_back(allVarsIndex(vars[k]), -sigma * vals[k]);
+        g_memoscip.SlackHasDef[sidx] = 1;
+        g_memoscip.SlackIsModel[sidx] = 1;
+        g_memoscip.SlackDefTerms[sidx] = std::move(terms);
+        g_memoscip.SlackDefRhs[sidx] = -sigma * rhs;
+        nregistered++;
+        if(g_options.verbosity > 1)
+            cout<<"Model slack "<<SCIPvarGetName(vars[slackPos])<<" defined by "<<SCIPconsGetName(cons)<<" ("
+                <<g_memoscip.SlackDefTerms[sidx].size()<<" terms)"<<endl;
+    }
+    cout<<"Option -submodel: "<<nregistered<<" model slack definitions"<<endl;
+}
+
 /** Initialises AllVars, CurrentVarIdx, VarLb, VarUb and AuxVar from the columns of the first LP. */
 static void initVarIndexMaps(SCIP* scip)
 {
@@ -227,6 +278,7 @@ static void copyParentInfo(SCIP_Longint nodenumber)
     node.DualProofCoef.second=0;
     node.Status="FEASIBLE";
     node.lb_increase=0;
+    node.drop_loss=0;
     for (size_t i = 0; i < node.y_i.size(); i++){
         if(g_memoscip.VarLb[i]==1){
             node.Var1.push_back(allVarsIndex(g_memoscip.AllVars[i]));
@@ -245,12 +297,24 @@ static SCIP_RETCODE processNodeLP(SCIP* scip, SCIP_LPSOLSTAT stat, SCIP_Longint 
             cout<<"LP INFEASIBLE "<<endl;
         SCIP_CALL(gatherLPInfeasibilityCertificate(scip, nodenumber));
     }else if(stat==SCIP_LPSOLSTAT_OPTIMAL || stat==SCIP_LPSOLSTAT_OBJLIMIT){
+        if(g_options.mir && !SCIPinDive(scip) && !SCIPinProbing(scip)){
+            // Reference point of the MIR cuts learned at this node
+            std::vector<SCIP_Real>& lpsol = g_memoscip.nodeInfoMap[nodenumber].LPSol;
+            lpsol.assign(g_memoscip.AllVars.size(), 0.0);
+            SCIP_COL** cols = SCIPgetLPCols(scip);
+            for(int i = 0; i < SCIPgetNLPCols(scip); ++i)
+                lpsol[allVarsIndex(SCIPcolGetVar(cols[i]))] = SCIPcolGetPrimsol(cols[i]);
+        }
         SCIP_Real lpobj=SCIPgetLPObjval(scip);
         if(g_options.verbosity >= 1)
             cout<<"LP OPTIMAL: "<<lpobj<<endl;
-        // Only analyse the LP if the lower bound increased enough
+        // Only analyse the LP if the lower bound increased enough. Even with -m0, a bound that did not change (up to
+        // dual noise) copies the parent duals: they stay optimal for the node LP (tightening bounds cannot decrease
+        // their Lagrangian bound, and weak duality caps it at the unchanged LP value), whereas a new, degenerate dual
+        // solution gives a nonzero proof with rhs ~0 that addNodeProof drops
         SCIP_Real parentlb = g_memoscip.nodeInfoMap[parentnumber].lb;
-        if(!SCIPisDualfeasZero(scip,lpobj) && (fabs(parentlb - lpobj)>= g_options.minInc || Myceil(lpobj)>=MyPrimalbound(scip) || lpobj - Myceil(parentlb) > 1e-5))
+        const SCIP_Real minInc = max((SCIP_Real)g_options.minInc, 1e-6);
+        if(!SCIPisDualfeasZero(scip,lpobj) && (fabs(parentlb - lpobj)>= minInc ||Myceil(lpobj)>=MyPrimalbound(scip) || lpobj - Myceil(parentlb) > 1e-5))
             AnalyseDualSol(scip,nodenumber );
         else
             copyParentInfo(nodenumber);
@@ -332,8 +396,11 @@ SCIP_DECL_EVENTEXEC(eventExecNodeSolved)
         cout << "Node " << nodenumber<<" status "<<status<<" "<<g_memoscip.nodeInfoMap[nodenumber].Status<<endl;
     }
 
-    if(g_memoscip.CurrentVarIdx.empty())
+    if(g_memoscip.CurrentVarIdx.empty()){
         initVarIndexMaps(scip);
+        if(g_options.subModelSlack)
+            registerModelSlackDefs(scip);
+    }
 
     SCIP_Bool cutoff, lperror;
     SCIP_LPSOLSTAT stat = SCIPgetLPSolstat(scip);
@@ -744,6 +811,11 @@ static SCIP_RETCODE splitNodeDelete(SCIP* scip, SCIP_Longint nodenumber, SCIP_Lo
     // Parts of the node increment
     vector<ProofPart> incparts;
     vector<int> increp;
+    // Bound on how much the summed rhs is below the summed increases (see NodeInfo::drop_loss). A child's stored
+    // parts sum to its rhs; each component comes from one child, so the sum of both losses bounds theirs
+    SCIP_Real drop_summed = 0.0;
+    if (twoChildren)
+        drop_summed += g_memoscip.nodeInfoMap[children[0]].drop_loss + g_memoscip.nodeInfoMap[children[1]].drop_loss;
     // With two children, also when the bound did not increase (lb increase 0 up to noise): if the duals changed, the
     // increment carries the fused coefficients (bounded by the reduced costs of the node) back to the reduced costs of
     // the parent. With one child or none the proof is the increment alone, useless when its rhs is not positive
@@ -763,8 +835,13 @@ static SCIP_RETCODE splitNodeDelete(SCIP* scip, SCIP_Longint nodenumber, SCIP_Lo
                     k = q;
             incparts[k].rhs -= excess;
         }
+        SCIP_Real incRhs = 0.0;
         for (const ProofPart& p : incparts)
+        {
             increp.push_back(p.orphan ? -1 : labelOf(p));
+            incRhs += p.rhs;
+        }
+        drop_summed += max(0.0, nodeInfo.lb_increase - incRhs);
     }
 
     // -v4: the parts of the children and of the node increment, by component (named by a variable of the component)
@@ -867,12 +944,12 @@ static SCIP_RETCODE splitNodeDelete(SCIP* scip, SCIP_Longint nodenumber, SCIP_Lo
         g.ensure(n);
         applyBoundPropagationRemovals(nodenumber, g.c, rhs_summed);
     }
-    checkSummedRhs(nodenumber, children, rhs_summed, infeasibleFusion);
+    checkSummedRhs(nodenumber, children, rhs_summed, drop_summed, infeasibleFusion);
     rhs_summed = 0.0;
     vector<SCIP_Real> total(n, 0.0);
     for (auto& [key, g] : res)
     {
-        dropNegligibleCoefs(scip, g.c, g.rhs);
+        drop_summed += dropNegligibleCoefsTracked(scip, g.c, g.rhs);
         rhs_summed += g.rhs;
         for (size_t i = 0; i < n; ++i)
             total[i] += g.c[i];
@@ -904,7 +981,8 @@ static SCIP_RETCODE splitNodeDelete(SCIP* scip, SCIP_Longint nodenumber, SCIP_Lo
             char name[100];
             snprintf(name, 100, "cut_%lld_%d%s", nodenumber, SCIPgetDepth(scip), suffix);
             SCIP_CALL( SCIPqueueCut(scip, name, (int)vars.size(), vars.data(), coefs.data(), rhs_ctr, rhs_ctr,
-                &g_memoscip.CutQueue) );
+                &g_memoscip.CutQueue,
+                                &g_memoscip.nodeInfoMap[nodenumber].LPSol) );
             if (verbose)
                 cout << "[split]   cut " << name << " from component " << compName(key) << ": rhs " << rhs_ctr << ", "
                      << vars.size() << " terms" << endl;
@@ -969,9 +1047,10 @@ static SCIP_RETCODE splitNodeDelete(SCIP* scip, SCIP_Longint nodenumber, SCIP_Lo
     nodeInfo.DualProofCoef.second = rhs_summed;
     if (verbose)
         cout << "[split]   node " << nodenumber << " proof rhs " << rhs_summed << " (lb increase before " << nodeInfo.lb_increase
-             << "), passed to parent " << parentNumber << endl;
-    assert(nodeInfo.lb_increase<=rhs_summed+1e-6*max(1.0,fabs(rhs_summed)));
-    nodeInfo.lb_increase = rhs_summed;
+             << ", drop loss " << drop_summed << "), passed to parent " << parentNumber << endl;
+    assert(nodeInfo.lb_increase<=rhs_summed+drop_summed+1e-6*max(1.0,fabs(rhs_summed)));
+    nodeInfo.lb_increase = rhs_summed + drop_summed;
+    nodeInfo.drop_loss = drop_summed;
     assert(Myceil(g_memoscip.nodeInfoMap[parentNumber].lb + nodeInfo.lb_increase) >= MyPrimalbound(scip)-1 ||SCIPisInfinity(scip, MyPrimalbound(scip)) );
     g_memoscip.SplitNodes++;
     return SCIP_OKAY;
@@ -1062,6 +1141,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
 
         vector<SCIP_Real> ResFus(g_memoscip.AllVars.size(),0.0);
         SCIP_Real rhsFus=0;
+        SCIP_Real drop_summed=0;
         bool infeasibleFusion=false;
         if(children.size()==1){
             checkSingleChildProof(nodenumber, children[0]);
@@ -1071,7 +1151,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
                 for(long child : children)
                     cout<<"Two children "<<child<<" lb "<<g_memoscip.nodeInfoMap[child].lb<<" versus parent lb "<<nodeInfo.lb<<" "<<g_memoscip.nodeInfoMap[child].DualProofCoef.first.size()<<" "<<g_memoscip.nodeInfoMap[child].DualProofCoef.second<<" incr lb "<<g_memoscip.nodeInfoMap[child].lb_increase<<endl;
             }
-            SCIP_CALL( fuseChildrenProofs(scip, nodenumber, children, ResFus, rhsFus, infeasibleFusion) );
+            SCIP_CALL( fuseChildrenProofs(scip, nodenumber, children, ResFus, rhsFus, drop_summed, infeasibleFusion) );
         }else{
             if(g_options.verbosity > 2)
                 cout<<"No child "<<endl;
@@ -1120,15 +1200,16 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
                                 NewVar.data(),
                                 NewCoefs.data(),
                                 rhs_ctr,  // lhs (equality constraint)
-                                rhs_ctr,&g_memoscip.CutQueue) );
+                                rhs_ctr,&g_memoscip.CutQueue,
+                                &g_memoscip.nodeInfoMap[nodenumber].LPSol) );
 
             NewInds.clear();
             NewCoefs.clear();
             NewVar.clear();
         }
 
-        assert(fabs(nodeInfo.DualProofCoef.second-nodeInfo.lb_increase)<1e-5);
-        addNodeProof(nodenumber, ResFus, rhs_summed);
+        assert(fabs(nodeInfo.DualProofCoef.second+nodeInfo.drop_loss-nodeInfo.lb_increase)<1e-5);
+        addNodeProof(nodenumber, ResFus, rhs_summed, drop_summed, children.size()==2);
         if(g_options.verbosity > 2){
             cout<<"mid res "<<endl;
             printProof(scip, ResFus, ">=", rhs_summed, true);
@@ -1145,12 +1226,12 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
             printProof(scip, ResFus, ">=", rhs_summed, true);
         }
 
-        checkSummedRhs(nodenumber, children, rhs_summed, infeasibleFusion);
+        checkSummedRhs(nodenumber, children, rhs_summed, drop_summed, infeasibleFusion);
          if(g_options.verbosity > 2){
             cout<<"final2 res "<<endl;
             printProof(scip, ResFus, ">=", rhs_summed, true);
         }
-        dropNegligibleCoefs(scip, ResFus, rhs_summed);
+        drop_summed += dropNegligibleCoefsTracked(scip, ResFus, rhs_summed);
          if(g_options.verbosity > 2){
             cout<<"drop res "<<endl;
             printProof(scip, ResFus, ">=", rhs_summed, true);
@@ -1160,7 +1241,7 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
                 <<nodeInfo.lb_increase;
             for(long child : children)
                 cout<<", child "<<child<<" rhs "<<g_memoscip.nodeInfoMap[child].DualProofCoef.second;
-            cout<<", fused rhs "<<rhsFus<<" -> node proof rhs "<<rhs_summed<<" passed to parent "<<parentNumber<<endl;
+            cout<<", fused rhs "<<rhsFus<<" -> node proof rhs "<<rhs_summed<<" (drop loss "<<drop_summed<<") passed to parent "<<parentNumber<<endl;
         }
         // The proof of the node (before reduction) is kept to be fused at its parent
         vector<int> Inds;
@@ -1210,18 +1291,20 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
                                 NewVar.data(),
                                 NewCoefs.data(),
                                 rhs_ctr,  // lhs (equality constraint)
-                                rhs_ctr,&g_memoscip.CutQueue) );
+                                rhs_ctr,&g_memoscip.CutQueue,
+                                &g_memoscip.nodeInfoMap[nodenumber].LPSol) );
             if(g_options.verbosity > 2)
                 SCIPprintQueuedCuts(scip, &g_memoscip.CutQueue);
         }
 
-        assert(abs(nodeInfo.DualProofCoef.second-nodeInfo.lb_increase) < 1e-9);
+        assert(abs(nodeInfo.DualProofCoef.second+nodeInfo.drop_loss-nodeInfo.lb_increase) < 1e-9*max(1.0,fabs(nodeInfo.lb_increase)));
         assert(NewCoefs.size()<=g_memoscip.CurrentVarIdx.size());
         nodeInfo.DualProofCoef.second=rhs_summed;
         nodeInfo.DualProofInds=Inds;
         nodeInfo.DualProofCoef.first=Coefs;
-        assert(nodeInfo.lb_increase<=rhs_summed+1e-6*max(1.0,fabs(rhs_summed)) || !nodeInfo.NodeConsistency.empty());
-        nodeInfo.lb_increase=rhs_summed;
+        assert(nodeInfo.lb_increase<=rhs_summed+drop_summed+1e-6*max(1.0,fabs(rhs_summed)) || !nodeInfo.NodeConsistency.empty());
+        nodeInfo.lb_increase=rhs_summed+drop_summed;
+        nodeInfo.drop_loss=drop_summed;
         assert(Myceil(g_memoscip.nodeInfoMap[parentNumber].lb + nodeInfo.lb_increase) >= MyPrimalbound(scip)-1 ||SCIPisInfinity(scip, MyPrimalbound(scip)) );
         eraseChildren(nodenumber, children);
     }

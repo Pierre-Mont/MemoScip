@@ -46,13 +46,19 @@ bool isInfeasibilityRhs(SCIP_Real rhs);
 /** Queues the clause sum x_i >= 1 over the TOP literals of the infeasibility proof sum coefs[i] x_i >= rhs. */
 SCIP_RETCODE queueInfeasibilityClause(SCIP* scip, SCIP_Longint nodenumber, std::vector<SCIP_Real> coefs, SCIP_Real rhs);
 
-/** If both children increased the lower bound, fuses their proofs into ResFus with right-hand side rhsFus.
+/** If both children increased the lower bound, fuses their proofs into ResFus with right-hand side rhsFus, lowered by
+ *  at most lossFus below the children increases.
  *  infeasibleFusion is set if the fused proof proves the node infeasible; its clause version is then learned. */
 SCIP_RETCODE fuseChildrenProofs(SCIP* scip, SCIP_Longint nodenumber, const std::vector<long>& children,
-    std::vector<SCIP_Real>& ResFus, SCIP_Real& rhsFus, bool& infeasibleFusion);
+    std::vector<SCIP_Real>& ResFus, SCIP_Real& rhsFus, SCIP_Real& lossFus, bool& infeasibleFusion);
 
-/** Adds the node's own dual proof (if it increased the lower bound) to ResFus and rhs_summed. */
-void addNodeProof(SCIP_Longint nodenumber, std::vector<SCIP_Real>& ResFus, SCIP_Real& rhs_summed);
+/** Adds the node's own dual proof (if it increased the lower bound, or with two children) to ResFus and rhs_summed, and its drop loss
+ *  (see NodeInfo::drop_loss) to drop_summed. */
+void addNodeProof(SCIP_Longint nodenumber, std::vector<SCIP_Real>& ResFus, SCIP_Real& rhs_summed, SCIP_Real& drop_summed,
+    bool twoChildren);
+
+/** dropNegligibleCoefs, returning how much it lowered rhs. */
+SCIP_Real dropNegligibleCoefsTracked(SCIP* scip, std::vector<SCIP_Real>& coefs, SCIP_Real& rhs);
 
 /** Replaces variables removed by bound propagation with their explanation. */
 void applyBoundPropagationRemovals(SCIP_Longint nodenumber, std::vector<SCIP_Real>& ResFus, SCIP_Real rhs_summed);
@@ -63,7 +69,7 @@ void applyNodeConsistency(SCIP* scip, SCIP_Longint nodenumber, SCIP_Longint pare
 
 /** Debug check (option -d) that rhs_summed matches the lower bound increases of the node and its children. */
 void checkSummedRhs(SCIP_Longint nodenumber, const std::vector<long>& children, SCIP_Real rhs_summed,
-    bool infeasibleFusion);
+    SCIP_Real drop_summed, bool infeasibleFusion);
 
 /** Removes the children of nodenumber from nodeInfoMap. */
 void eraseChildren(SCIP_Longint nodenumber, const std::vector<long>& children);

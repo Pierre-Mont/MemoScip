@@ -46,6 +46,10 @@ struct MemoSCIPRunOptions {
     /** Variable ordering file (-order): variables are branched on in this order by the custom branching rule. */
     std::string orderFile;
 
+    /** Knapsack order (-korder): the capacity constraints are detected and the custom branching rule branches on the
+     *  items by decreasing profit / weight (see applyKnapsackOrder in main.cpp). */
+    bool knapsackOrder = false;
+
     int maxCutQueueSize = 0;
 
     bool sepa = false; // True = enable separation, False = disable separation
@@ -53,6 +57,12 @@ struct MemoSCIPRunOptions {
     bool finish_Learn = false; // True = generate constraints until root node,  False = stop when problem is solved
 
     int Weaken = 0; // 0 = no weakening, 1 = weaken constraints
+
+    /** Option -mir[=N]: MIR cut of each learned cut, kept when it is more efficacious on the LP solution of the node of
+     *  the cut. 0 = off, 1 = added next to the learned cut, 2 = replaces the learned cut. */
+    int mir = 0;
+
+    bool subModelSlack = false; // True = substitute the slacks of the model inequalities by their definition in a cut when it is added (-submodel)
 
     bool subSlack = false; // True = substitute the learned slacks by their definition in a cut when it is added
 

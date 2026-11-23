@@ -9,6 +9,7 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -32,6 +33,55 @@ struct ProofPart {
     std::vector<SCIP_Real> coefs;
     SCIP_Real rhs = 0.0;
     bool orphan = false;  // node increment piece with no unfixed variable at the node (newly fixed variables, fully fixed rows)
+};
+
+/** Statistics on the variables of a node proof (non negligible coefficients only), by sign of the coefficient:
+ *  [0] positive, [1] negative. "atNode" = fixed at the depth of the node (branching or propagation at the node),
+ *  "before" = fixed at an ancestor, globally or in presolving, "unfixed" = not fixed at the node, "cutSlack" = slack
+ *  of a learned cut, "modelSlack" = slack of a model inequality. A variable is fixed if its MemoSCIP bounds
+ *  (VarLb/VarUb, which include the fixings implied by the domain constraints) are equal; its depth is the earliest
+ *  depth at which it or one of its auxiliary variables was fixed in SCIP. */
+struct ProofVarStats {
+    long long proofs = 0;
+    long long emptyProofs = 0;
+    long long negligible = 0;          // coefficients dropped by dropNegligibleCoefs
+    long long noBefore = 0;            // non empty proofs without any variable fixed before the node
+    long long unfixed[2] = {0, 0};
+    long long atNode[2] = {0, 0};
+    long long atNode1[2] = {0, 0};     // part of atNode assigned to 1
+    long long before[2] = {0, 0};
+    long long before1[2] = {0, 0};     // part of before assigned to 1
+    long long cutSlack[2] = {0, 0};
+    long long modelSlack[2] = {0, 0};
+    long long unknownDepth[2] = {0, 0};  // fixed in the MemoSCIP bounds without a SCIP fixing (should stay 0)
+
+    void add(const ProofVarStats& o, int sign)
+    {
+        proofs += sign * o.proofs;
+        emptyProofs += sign * o.emptyProofs;
+        negligible += sign * o.negligible;
+        noBefore += sign * o.noBefore;
+        for (int k = 0; k < 2; ++k) {
+            unfixed[k] += sign * o.unfixed[k];
+            atNode[k] += sign * o.atNode[k];
+            atNode1[k] += sign * o.atNode1[k];
+            before[k] += sign * o.before[k];
+            before1[k] += sign * o.before1[k];
+            cutSlack[k] += sign * o.cutSlack[k];
+            modelSlack[k] += sign * o.modelSlack[k];
+            unknownDepth[k] += sign * o.unknownDepth[k];
+        }
+    }
+};
+
+/** Use of the learned cuts by the node LPs, from the full dual solution of each analysed LP (not in dives/probing). */
+struct CutUsageStats {
+    long long lps = 0;               // analysed node LPs
+    long long lpsWithCuts = 0;       // ... with at least one learned cut row in the LP
+    long long cutRowsInLP = 0;       // sum over the analysed LPs of the number of learned cut rows
+    long long lpsUsingCuts = 0;      // ... with at least one learned cut row with a nonzero dual
+    long long cutDuals = 0;          // sum over the analysed LPs of the number of learned cut rows with a nonzero dual
+    double boundShare = 0.0;         // sum over the LPs using cuts of (sum of dual * rhs of the cut rows) / LP value
 };
 
 struct NodeInfo {
@@ -73,6 +123,10 @@ struct NodeInfo {
     std::vector<std::pair<int, std::vector<int>>> BPRemoval;  // (variable removed by bound propagation, explanation)
 
     std::vector<SCIP_CONS*> AddedConstraints;
+
+    // Statistics of the last proof computed at the node (its LP can be analysed twice), see MemoSCIPContext::ProofStats
+    ProofVarStats ProofStats;
+    int ProofStatsKind = -1;  // -1: none, 0: LP dual proof, 1: infeasibility proof
 };
 
 
@@ -126,6 +180,11 @@ struct MemoSCIPContext {
     long long SplitPassengers = 0;  // parts of other components passed from a child to the node
     long long SplitMerged = 0;      // child parts that joined another component at the node
 
+    // Statistics on the node proofs: [0] LP dual proofs (AnalyseDualSol), [1] infeasibility proofs
+    ProofVarStats ProofStats[2];
+    CutUsageStats CutUsage;
+    std::unordered_set<int> UsedCutRows;  // SCIP row index of the learned cuts that had a nonzero dual in a node LP
+
     long long TOP = 1e+9;
     std::chrono::duration<double> AnalyseDualSolTime{0.0}; // cumulated time spent in AnalyseDualSol
     std::chrono::duration<double> NodeDeleteTime{0.0}; // cumulated time spent in eventExecNodeDelete
@@ -171,11 +230,13 @@ inline bool isDiveRelaxedRow(SCIP_ROW* row)
 }
 
 /** Value of the equality "row = value" used in the proofs: the rhs, or for a row relaxed in the dive its remaining
- *  finite side, which is the value of the original equality (the slack term is kept in the aggregation). */
+ *  finite side, which is the value of the original equality (the slack term is kept in the aggregation). A row made
+ *  free in the dive (slacks of both signs missing from the LP) gets +infinity, so that the proofs skip it as a row
+ *  that is not in the LP. */
 inline SCIP_Real equalityRowValue(SCIP* scip, SCIP_ROW* row)
 {
     if (isDiveRelaxedRow(row) && SCIPisInfinity(scip, SCIProwGetRhs(row)))
-        return SCIProwGetLhs(row);
+        return SCIPisInfinity(scip, -SCIProwGetLhs(row)) ? SCIPinfinity(scip) : SCIProwGetLhs(row);
     return SCIProwGetRhs(row);
 }
 

@@ -62,9 +62,13 @@ struct MemoSCIPRunOptions {
      *  the cut. 0 = off, 1 = added next to the learned cut, 2 = replaces the learned cut. */
     int mir = 0;
 
+
     bool subModelSlack = false; // True = substitute the slacks of the model inequalities by their definition in a cut when it is added (-submodel)
 
     bool subSlack = false; // True = substitute the learned slacks by their definition in a cut when it is added
+
+    /** Option -parallel: reject a learned cut nearly parallel to an earlier kept learned cut (see memoscip_parallel.h) */
+    bool parallel = false;
 
     /** Remove the dual noise per connected component of the node LP (-comp): the rows of the components the node
      *  decision does not touch keep the parent duals. */

@@ -15,6 +15,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstring>
+#include <climits>
 #include <cstdio>
 #include <iostream>
 #include <limits>
@@ -877,6 +879,104 @@ static void buildIncrementParts(SCIP* scip, NodeInfo& node, const NodeInfo& pare
     (void)totalRhs;
 }
 
+/** Records in g_memoscip.ProofStats[kind] the statistics of the proof just stored in node (DualProofInds/Coef),
+ *  replacing those of a previous proof of the same node. Only for the nodes of the tree (not in dives or probing). */
+static void recordProofStats(SCIP* scip, NodeInfo& node, int kind, long long nNegligible)
+{
+    if(SCIPinDive(scip) || SCIPinProbing(scip))
+        return;
+    ProofVarStats st;
+    st.proofs = 1;
+    st.negligible = nNegligible;
+    const int depth = SCIPgetDepth(scip);
+    bool any = false;
+    for(size_t k = 0; k < node.DualProofInds.size(); ++k)
+    {
+        const SCIP_Real c = node.DualProofCoef.first[k];
+        if(c == 0.0)
+            continue;
+        any = true;
+        const int sg = c > 0 ? 0 : 1;
+        const int idx = node.DualProofInds[k];
+        SCIP_VAR* var = g_memoscip.AllVars[idx];
+        if(isSlackVar(var))
+        {
+            // "slack_<i>" / "t_slack_<i>": slack of a model inequality, "sc_<k>" / "t_sc_<k>": slack of a learned cut
+            if(strstr(SCIPvarGetName(var), "slack_") != nullptr)
+                st.modelSlack[sg]++;
+            else
+                st.cutSlack[sg]++;
+        }
+        else if(g_memoscip.VarLb[idx] == g_memoscip.VarUb[idx])
+        {
+            int fixDepth = INT_MAX;
+            auto consider = [&](SCIP_VAR* v){
+                if(SCIPvarGetLbLocal(v) == SCIPvarGetUbLocal(v))
+                    fixDepth = min(fixDepth, SCIPvarGetLastBdchgDepth(v));
+            };
+            consider(var);
+            forEachAuxVar(shiftedIndex(var), [&](int aux){ consider(g_memoscip.AllVars[aux]); });
+            const bool one = g_memoscip.VarLb[idx] == 1;
+            if(fixDepth == INT_MAX)
+                st.unknownDepth[sg]++;
+            else if(fixDepth == depth){
+                st.atNode[sg]++;
+                if(one) st.atNode1[sg]++;
+            }else{
+                st.before[sg]++;
+                if(one) st.before1[sg]++;
+                if(g_options.verbosity > 3)
+                    cout<<"FIXED BEFORE IN PROOF node "<<SCIPnodeGetNumber(SCIPgetCurrentNode(scip))<<" depth "<<depth<<": "
+                        <<SCIPvarGetName(var)<<" = "<<g_memoscip.VarLb[idx]<<" (fixed at depth "<<fixDepth<<"), coef "<<c<<endl;
+            }
+        }
+        else
+            st.unfixed[sg]++;
+    }
+    st.emptyProofs = any ? 0 : 1;
+    if(any && st.before[0] + st.before[1] == 0)
+        st.noBefore = 1;
+    if(node.ProofStatsKind >= 0)
+        g_memoscip.ProofStats[node.ProofStatsKind].add(node.ProofStats, -1);
+    g_memoscip.ProofStats[kind].add(st, +1);
+    node.ProofStats = st;
+    node.ProofStatsKind = kind;
+}
+
+/** Records the use of the learned cuts by the node LP just solved (full dual solution dualsol, aligned with rows). */
+static void recordCutUsage(SCIP* scip, SCIP_ROW** rows, int nrows, const vector<SCIP_Real>& dualsol, SCIP_Real objval)
+{
+    if(SCIPinDive(scip) || SCIPinProbing(scip))
+        return;
+    CutUsageStats& u = g_memoscip.CutUsage;
+    int ncuts = 0, nused = 0;
+    SCIP_Real share = 0.0;
+    for(int i = 0; i < nrows; ++i)
+    {
+        if(!isLearnedCutRow(rows[i]))
+            continue;
+        ncuts++;
+        if(SCIPisDualfeasZero(scip, dualsol[i]))
+            continue;
+        nused++;
+        g_memoscip.UsedCutRows.insert(SCIProwGetIndex(rows[i]));
+        const SCIP_Real v = equalityRowValue(scip, rows[i]);
+        if(!SCIPisInfinity(scip, fabs(v)))
+            share += dualsol[i] * v;
+    }
+    u.lps++;
+    u.cutRowsInLP += ncuts;
+    if(ncuts > 0)
+        u.lpsWithCuts++;
+    if(nused > 0)
+    {
+        u.lpsUsingCuts++;
+        u.cutDuals += nused;
+        if(fabs(objval) > 1e-9)
+            u.boundShare += share / objval;
+    }
+}
+
 //Analyse the dual solution of a general LP to produce a dual proof constraint
 SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
     ScopedTimer AnalyseDualSolTimer(g_memoscip.AnalyseDualSolTime);
@@ -1012,7 +1112,8 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
             {
                 SCIP_VAR* var = SCIPcolGetVar(rowcols[nnonz-1]);
                 assert(SCIPvarGetName(var)[0] == 's');
-                assert(SCIPvarIsInLP(var) || collector.dualsol[i]==0);
+                // A row relaxed in the dive because its slack column is not in the LP has a legitimate nonzero dual
+                assert(SCIPvarIsInLP(var) || collector.dualsol[i]==0 || isDiveRelaxedRow(rows[i]));
                 (void)var;
             }
         }
@@ -1169,6 +1270,14 @@ SCIP_RETCODE AnalyseDualSol(SCIP* scip, SCIP_Longint nodeNumber){
     node.Status="FEASIBLE";
     node.lb_increase=lpIncrease;
     node.drop_loss=lpIncrease-sumdual;
+    {
+        long long nNegligible = 0;
+        for(size_t i = 0; i < nAllVars; ++i)
+            if(TempCoef[i] != 0.0 && ProofCoef[i] == 0.0)
+                nNegligible++;
+        recordProofStats(scip, node, 0, nNegligible);
+        recordCutUsage(scip, rows, nrows, collector.dualsol, collector.objval);
+    }
     if(g_options.verbosity > 1){
         cout<<collector.objval<<" "<<parentInfo.lb<<" Truesumdual "<<Truesumdual<<" "<<Truesumdual-collector.objval<<endl;
         cout<<"DIFF Objval "<<collector.objval-parentInfo.lb<<" versus sumdiffdual "<<sumdual<<endl;
@@ -1245,8 +1354,11 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
 
                 if(SCIProwGetRhs(rows[i])==SCIProwGetLhs(rows[i]))
                     SCIP_CALL( SCIPaggrRowAddRow(scip, proofrow, rows[i], rowFarkas[i], negated ? -1 : 1) );
-                else if(isDiveRelaxedRow(rows[i]))  // equality whose slack column is not in the LP: use its finite side
-                    SCIP_CALL( SCIPaggrRowAddRow(scip, proofrow, rows[i], rowFarkas[i], SCIPisInfinity(scip, SCIProwGetRhs(rows[i])) ? -1 : 1) );
+                else if(isDiveRelaxedRow(rows[i])){  // equality whose slack column is not in the LP: use its finite side
+                    // A row made free in the dive has a zero Farkas multiplier (up to the tolerance): skip it
+                    if(!SCIPisInfinity(scip, equalityRowValue(scip, rows[i])))
+                        SCIP_CALL( SCIPaggrRowAddRow(scip, proofrow, rows[i], rowFarkas[i], SCIPisInfinity(scip, SCIProwGetRhs(rows[i])) ? -1 : 1) );
+                }
                 else
                     assert(SCIProwGetName(rows[i])[0]=='s' && SCIProwGetName(rows[i])[1]=='c');
             }
@@ -1312,6 +1424,7 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
             node.DualProofInds.push_back(i);
         }
         markNodeInfeasible(node);
+        recordProofStats(scip, node, 1, 0);
         SCIPaggrRowFree(scip, &proofrow);
 
     }else{
@@ -1323,6 +1436,7 @@ SCIP_RETCODE gatherLPInfeasibilityCertificate(
             }
         }
         markNodeInfeasible(node);
+        recordProofStats(scip, node, 1, 0);
         if(g_options.debug){
             // Learned cut rows end with their slack variable
             for(int i = 0; i < nrows; ++i)

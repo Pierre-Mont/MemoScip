@@ -7,6 +7,7 @@
 #include "scip/cuts.h"
 #include "memoscip_dual.h"
 #include "memoscip_events.h"
+#include "memoscip_parallel.h"
 #include "scip/var.h"
 
 #include <algorithm>
@@ -298,6 +299,8 @@ static SCIP_RETCODE addCutWithSlack(SCIP* scip, MemoSCIPContext* g_memoscip, con
    consvars.push_back(slack);
    consvals.push_back(-1.0);
    g_memoscip->AllVars.push_back(slack);
+   if( g_options.parallel )
+      parallelRegister(scip, cutname, slack, consvars, consvals);
    g_memoscip->VarUb.push_back(SCIPinfinity(scip));
    g_memoscip->VarLb.push_back(0);
    const int slackAllIdx = (int)g_memoscip->AllVars.size()-1;
@@ -544,6 +547,10 @@ SCIP_RETCODE AddCutstoProb(SCIP* scip, MyQueue* q, MemoSCIPContext* g_memoscip, 
       }
 
       if(consvars.empty())
+         continue;
+
+      // Option -parallel: a cut nearly parallel to an earlier learned cut is not added
+      if( g_options.parallel && parallelCheck(scip, cut.name, consvars, consvals) )
          continue;
 
       // Option -mir: the c-MIR cut of the learned cut is added next to it (computed before its slack is created)

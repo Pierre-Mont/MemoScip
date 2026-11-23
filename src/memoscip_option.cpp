@@ -133,6 +133,11 @@ static bool handle_short_flag(const char* s, MemoSCIPRunOptions& out, std::strin
         out.subSlack = true;
         return true;
     }
+    if (std::strcmp(s, "-parallel") == 0)
+    {
+        out.parallel = true;
+        return true;
+    }
     if (std::strcmp(s, "-sep") == 0)
     {
         out.sepa = true;
@@ -313,6 +318,8 @@ void print_memoscip_usage(const char* programName)
         << "             (slack_i = a_i x - b_i, both signs); the dual proofs passed to the parent nodes are unchanged\n"
         << "  -subslack  When adding a learned cut, substitute the slacks of earlier learned cuts by their definition\n"
         << "             (sc_k = a_k x - b_k); the dual proofs passed to the parent nodes are unchanged\n"
+        << "  -parallel  Do not add a learned cut nearly parallel to an earlier added learned cut: |cos| > 1 - 1e-4 once\n"
+        << "             all slacks are replaced by their definition and each domain block sum_v x_v = 1 is centred\n"
         << "  -ub=F      Initial primal bound: objective limit F (only solutions strictly better are accepted)\n"
         << "  -mir[=N]   MIR cut of each learned cut (global bounds, delta chosen on the LP solution of the node of the cut),\n"
         << "             kept if more efficacious there: 1 (default for -mir) = added next to the learned cut,\n"

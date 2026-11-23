@@ -2,6 +2,7 @@
 
 #include "memoscip_dual.h"
 #include "memoscip_events.h"
+#include "memoscip_parallel.h"
 #include "memoscip_option.h"
 #include "memoscip_reader.h"
 #include "memoscip_types.h"
@@ -423,6 +424,47 @@ static bool applyKnapsackOrder(SCIP* scip, string& err)
     return true;
 }
 
+/** Prints the statistics on the variables of the node proofs (ProofVarStats) and on the use of the learned cuts. */
+static void printProofStats()
+{
+    const char* names[2] = {"LP dual proofs", "Infeasibility proofs"};
+    for (int kind = 0; kind < 2; ++kind) {
+        const ProofVarStats& st = g_memoscip.ProofStats[kind];
+        if (st.proofs == 0)
+            continue;
+        const long long nonEmpty = st.proofs - st.emptyProofs;
+        cout<<names[kind]<<" : "<<st.proofs<<" proofs, "<<st.emptyProofs<<" empty, "<<st.negligible
+            <<" negligible coefs dropped, "<<st.noBefore<<" without fixed-before vars"<<endl;
+        auto line = [&](const char* label, const long long* v) {
+            cout<<"  "<<label<<" : pos "<<v[0]<<" neg "<<v[1];
+            if (nonEmpty > 0)
+                cout<<" (avg per non empty proof: pos "<<(double)v[0]/nonEmpty<<" neg "<<(double)v[1]/nonEmpty<<")";
+            cout<<endl;
+        };
+        const long long at0[2] = {st.atNode[0] - st.atNode1[0], st.atNode[1] - st.atNode1[1]};
+        const long long bef0[2] = {st.before[0] - st.before1[0], st.before[1] - st.before1[1]};
+        line("Unfixed vars      ", st.unfixed);
+        line("Fixed at node     ", st.atNode);
+        line("  at node, to 0   ", at0);
+        line("  at node, to 1   ", st.atNode1);
+        line("Fixed before node ", st.before);
+        line("  before, to 0    ", bef0);
+        line("  before, to 1    ", st.before1);
+        line("Constraint slacks ", st.modelSlack);
+        line("Cut slacks        ", st.cutSlack);
+        if (st.unknownDepth[0] + st.unknownDepth[1] > 0)
+            line("Fixed, no depth   ", st.unknownDepth);
+    }
+    const CutUsageStats& u = g_memoscip.CutUsage;
+    if (u.lps > 0) {
+        cout<<"Learned cut usage : "<<u.lps<<" node LPs analysed, "<<u.lpsWithCuts<<" with learned cuts (avg "
+            <<(u.lpsWithCuts ? (double)u.cutRowsInLP/u.lpsWithCuts : 0.0)<<" cut rows), "<<u.lpsUsingCuts
+            <<" with a nonzero cut dual (avg "<<(u.lpsUsingCuts ? (double)u.cutDuals/u.lpsUsingCuts : 0.0)
+            <<" cuts), "<<g_memoscip.UsedCutRows.size()<<" distinct cuts used, avg bound share "
+            <<(u.lpsUsingCuts ? u.boundShare/u.lpsUsingCuts : 0.0)<<endl;
+    }
+}
+
 static void printStatistics(SCIP* scip)
 {
     cout<<"Solving Status : "<<SCIPgetStatus(scip)<<endl;
@@ -431,6 +473,8 @@ static void printStatistics(SCIP* scip)
     cout<<"Primal bound : "<<SCIPgetPrimalbound(scip)<<endl;
     cout<<"Dual bound : "<<SCIPgetDualbound(scip)<<endl;
     cout<<"Number of learned cuts : "<<g_memoscip.nbAddedctr<<endl;
+    if(g_options.parallel)
+        parallelPrintStatistics();
     if(g_options.subSlack || g_options.subModelSlack)
         cout<<"Slack substitution : "<<g_memoscip.nbSubstCuts<<" cuts substituted, "<<g_memoscip.nbSubstTrivial<<" skipped as trivial"<<endl;
     if(g_options.mir)
@@ -444,6 +488,7 @@ static void printStatistics(SCIP* scip)
     if (g_options.splitProofs)
         cout<<"Split proofs : nodes "<<g_memoscip.SplitNodes<<" fallback "<<g_memoscip.SplitFallback
             <<" passengers "<<g_memoscip.SplitPassengers<<" merged parts "<<g_memoscip.SplitMerged<<endl;
+    printProofStats();
     cout<<"Time in AnalyseDualSol : "<<g_memoscip.AnalyseDualSolTime.count()<<" seconds"<<endl;
     cout<<"Time in eventExecNodeDelete : "<<g_memoscip.NodeDeleteTime.count()<<" seconds"<<endl;
     cout<<"Time in eventExecNodeSolved : "<<g_memoscip.NodeSolvedTime.count()<<" seconds"<<endl;

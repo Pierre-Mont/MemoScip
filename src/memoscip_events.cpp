@@ -346,11 +346,17 @@ static SCIP_Real pseudoObjOf(const vector<int>& fixedTo1)
 /** In a dive, relaxes each learned cut row sum a x - s = rhs whose slack column s is not in the LP to the side
  *  allowed by s >= 0 (sum a x >= rhs). A column added to the LP in another subtree is removed from the LP when SCIP
  *  switches subtree and is only added back by pricing, which is not called in a dive: without its slack the row
- *  would be an equality and the dive LP could be wrongly infeasible. */
+ *  would be an equality and the dive LP could be wrongly infeasible.
+ *  A row can hold several slacks missing from the LP: without -subslack a learned cut keeps the slacks of earlier
+ *  cuts (coefficient > 0) next to its own (coefficient -1). A missing slack with coefficient < 0 drops the rhs, one
+ *  with coefficient > 0 drops the lhs, so the sides are collected over all the missing slacks of the row before it
+ *  is relaxed: with both signs the row is free (relaxing only the first side met kept the invalid row a x <= rhs). */
 static SCIP_RETCODE relaxCutRowsWithoutSlackColumn(SCIP* scip)
 {
     assert(SCIPinDive(scip));
     g_memoscip.DiveRelaxedRows.clear();
+    enum { DROP_RHS = 1, DROP_LHS = 2 };
+    std::unordered_map<SCIP_ROW*, int> sides;  // sides to drop, the rows in the order met in DiveRelaxedRows
     for (SCIP_VAR* var : g_memoscip.AllVars)
     {
         if(!isSlackVar(var) || SCIPvarGetStatus(var) != SCIP_VARSTATUS_COLUMN)
@@ -365,16 +371,24 @@ static SCIP_RETCODE relaxCutRowsWithoutSlackColumn(SCIP* scip)
         for (int k = 0; k < SCIPcolGetNNonz(col); ++k)
         {
             SCIP_ROW* row = colrows[k];
-            if(SCIProwGetLPPos(row) < 0 || !SCIPisEQ(scip, SCIProwGetLhs(row), SCIProwGetRhs(row)))
+            if(SCIProwGetLPPos(row) < 0 || !SCIPisEQ(scip, SCIProwGetLhs(row), SCIProwGetRhs(row)) || colvals[k] == 0.0)
                 continue;
-            if(colvals[k] < 0.0)
-                SCIP_CALL( SCIPchgRowRhsDive(scip, row, SCIPinfinity(scip)) );
-            else
-                SCIP_CALL( SCIPchgRowLhsDive(scip, row, -SCIPinfinity(scip)) );
-            g_memoscip.DiveRelaxedRows.push_back(row);
+            auto [it, inserted] = sides.try_emplace(row, 0);
+            if(inserted)
+                g_memoscip.DiveRelaxedRows.push_back(row);
+            it->second |= (colvals[k] < 0.0 ? DROP_RHS : DROP_LHS);
             if(g_options.verbosity > 3)
-                cout<<"Dive: relax row "<<SCIProwGetName(row)<<" (slack "<<SCIPvarGetName(var)<<" not in the LP)"<<endl;
+                cout<<"Dive: relax row "<<SCIProwGetName(row)<<" (slack "<<SCIPvarGetName(var)<<" not in the LP, coef "
+                    <<colvals[k]<<")"<<endl;
         }
+    }
+    for (SCIP_ROW* row : g_memoscip.DiveRelaxedRows)
+    {
+        const int drop = sides[row];
+        if(drop & DROP_RHS)
+            SCIP_CALL( SCIPchgRowRhsDive(scip, row, SCIPinfinity(scip)) );
+        if(drop & DROP_LHS)
+            SCIP_CALL( SCIPchgRowLhsDive(scip, row, -SCIPinfinity(scip)) );
     }
     return SCIP_OKAY;
 }
@@ -1107,7 +1121,6 @@ SCIP_DECL_EVENTEXEC(eventExecNodeDelete)
 
                 for (int i = 0; i < nvars; ++i)
                 {
-                    cout<<"Parent branching var "<<SCIPvarGetName(vars[i])<<" bound "<<bounds[i]<<" boundtype "<<boundtypes[i]<<endl;
                     decvar = allVarsIndex(vars[i]);
                     assert(SCIPvarGetName(vars[i]) == SCIPvarGetName(g_memoscip.AllVars[decvar]));
                     assert(bounds[i]==1);

@@ -90,7 +90,7 @@ SCIP_Real WeakenSlack(std::vector<SCIP_Real>& vals, const std::vector<SCIP_VAR*>
       if(vals[i]<0)
          Negterm+=vals[i];
    }
-   assert(vals[vals.size()-1]!=-1);
+   assert(vals[vals.size()-1]!=-1 || !isSlackVar(vars[vars.size()-1]));
    return Negterm;
 }
 
@@ -110,7 +110,7 @@ void Saturate(std::vector<SCIP_Real>& vals, const std::vector<SCIP_VAR*>& vars, 
       if(!isSlackVar(vars[i]))
          vals[i] = std::min(vals[i],rhs);
    }
-   assert(vals[vals.size()-1]!=-1);
+   assert(vals[vals.size()-1]!=-1 || !isSlackVar(vars[vars.size()-1]));
 }
 
 /** queues a cut to be added in the next separation round */

@@ -43,6 +43,7 @@ add_executable(memoscipl
     src/memoscip_events.cpp
     src/memoscip_reader.cpp
     src/sepa_mycuts.cpp
+    src/memoscip_parallel.cpp
 )
 
 target_link_libraries(memoscipl PRIVATE libscip LibLZMA::LibLZMA)
